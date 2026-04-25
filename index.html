@@ -4,10 +4,130 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>quizz-board</title>
+    <title>Quiz Board</title>
   </head>
   <body>
-    <div id="app"></div>
+    <h1>QUIZ BOARD</h1>
+    <p class="subtitle">
+      Click a category name to edit &bull; Click a tile to play
+    </p>
+
+    <div class="scoreboard" id="scoreboard"></div>
+    <div class="board" id="board"></div>
+
+    <div class="controls">
+      <button class="ctrl-btn" onclick="openAdmin()">
+        &#9881; Edit All Questions
+      </button>
+      <button class="ctrl-btn" onclick="showWinner()">
+        &#127942; Show Winner
+      </button>
+      <button class="ctrl-btn danger" onclick="resetBoard()">
+        &#8635; Reset Board
+      </button>
+    </div>
+
+    <!-- Question Modal -->
+    <div
+      class="overlay"
+      id="q-overlay"
+      style="display: none"
+      onclick="closeIfOutside(event)"
+    >
+      <div class="modal" id="q-modal">
+        <button class="modal-close" onclick="closeQModal()">&#10005;</button>
+        <div class="modal-pts" id="m-pts"></div>
+        <div class="modal-cat" id="m-cat"></div>
+        <div class="q-image-wrap" id="m-image-wrap" style="display: none">
+          <img id="m-image" src="" alt="Question image" />
+        </div>
+        <div class="q-display" id="m-question"></div>
+        <div class="a-display" id="m-answer"></div>
+        <div class="team-selector" id="m-teams"></div>
+        <div class="modal-btn-row">
+          <button
+            class="modal-btn btn-reveal"
+            id="btn-reveal"
+            onclick="revealAnswer()"
+          >
+            Reveal Answer
+          </button>
+          <button
+            class="modal-btn btn-correct"
+            id="btn-correct"
+            onclick="markResult(true)"
+            style="display: none"
+          >
+            &#10003; Correct
+          </button>
+          <button
+            class="modal-btn btn-wrong"
+            id="btn-wrong"
+            onclick="markResult(false)"
+            style="display: none"
+          >
+            &#10007; Wrong
+          </button>
+          <button class="modal-btn btn-skip" onclick="skipQuestion()">
+            Skip
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div
+      class="overlay"
+      id="edit-overlay"
+      style="display: none"
+      onclick="closeIfOutside(event)"
+    >
+      <div class="modal edit-modal" id="edit-modal">
+        <button class="modal-close" onclick="closeEditModal()">&#10005;</button>
+        <div id="edit-content"></div>
+      </div>
+    </div>
+
+    <!-- Admin Modal -->
+    <div
+      class="overlay"
+      id="admin-overlay"
+      style="display: none"
+      onclick="closeIfOutside(event)"
+    >
+      <div class="modal admin-modal" id="admin-modal">
+        <button class="modal-close" onclick="closeAdmin()">&#10005;</button>
+        <div id="admin-content"></div>
+        <button class="edit-save" onclick="saveAdmin()">
+          Save All Changes
+        </button>
+      </div>
+    </div>
+
+    <!-- Winner Modal -->
+    <div
+      class="overlay"
+      id="winner-overlay"
+      style="display: none"
+      onclick="closeIfOutside(event)"
+    >
+      <div class="modal winner-modal" id="winner-modal">
+        <button
+          class="modal-close"
+          onclick="
+            document.getElementById('winner-overlay').style.display = 'none'
+          "
+        >
+          &#10005;
+        </button>
+        <div class="winner-trophy">&#127942;</div>
+        <div id="winner-content"></div>
+      </div>
+    </div>
+
+    <!-- Audio Player -->
+    <audio id="music-audio" style="display: none"></audio>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
