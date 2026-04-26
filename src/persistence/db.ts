@@ -26,10 +26,16 @@ export const QUESTION_TYPE = {
 } as const
 export type QuestionType = (typeof QUESTION_TYPE)[keyof typeof QUESTION_TYPE]
 
+export const MEDIA_TYPE = { image: 'image', youtube: 'youtube' } as const
+export type MediaType = (typeof MEDIA_TYPE)[keyof typeof MEDIA_TYPE]
+
+export type ImageMedia = { type: typeof MEDIA_TYPE.image; src: string }
+export type YoutubeMedia = { type: typeof MEDIA_TYPE.youtube; videoId: string; startSeconds?: number; endSeconds?: number }
+export type QuestionMedia = ImageMedia | YoutubeMedia
+
 type QuestionBase = {
   q: string
-  img?: string
-  audio?: string
+  media?: QuestionMedia
 }
 
 export type OpenQuestion = QuestionBase & {
@@ -136,9 +142,24 @@ const VALID_COLORS = new Set<string>(Object.values(CATEGORY_COLOR))
 const VALID_MODES = new Set<string>(Object.values(APP_MODE))
 const VALID_QUESTION_TYPES = new Set<string>(Object.values(QUESTION_TYPE))
 
+function isValidMedia(m: unknown): boolean {
+  if (!isRecord(m)) return false
+  switch (m.type) {
+    case MEDIA_TYPE.image:
+      return typeof m.src === 'string' && m.src.length > 0
+    case MEDIA_TYPE.youtube:
+      return typeof m.videoId === 'string' && m.videoId.length > 0
+        && (m.startSeconds === undefined || typeof m.startSeconds === 'number')
+        && (m.endSeconds === undefined || typeof m.endSeconds === 'number')
+    default:
+      return false
+  }
+}
+
 function isValidQuestion(q: unknown): boolean {
   if (!isRecord(q)) return false
   if (typeof q.q !== 'string') return false
+  if ('media' in q && q.media !== undefined && !isValidMedia(q.media)) return false
 
   switch (q.type) {
     case QUESTION_TYPE.open:
@@ -172,6 +193,11 @@ function normalizeAppData(value: unknown): void {
       if (!('type' in q) || !VALID_QUESTION_TYPES.has(q.type as string)) {
         q.type = QUESTION_TYPE.open
       }
+      if ('img' in q && typeof q.img === 'string' && q.img && !('media' in q)) {
+        q.media = { type: MEDIA_TYPE.image, src: q.img }
+      }
+      delete q.img
+      delete q.audio
     }
   }
 }

@@ -1,6 +1,6 @@
 import './style.css'
-import { APP_MODE, CATEGORY_COLOR, QUESTION_TYPE, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
-import type { AppData, CategoryColor, Question, QuestionType } from './persistence/db.ts'
+import { APP_MODE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
+import type { AppData, CategoryColor, Question, QuestionType, QuestionMedia } from './persistence/db.ts'
 
 type ActiveQ = {
   catIdx: number
@@ -29,7 +29,7 @@ const data: AppData = {
 
 let activeQ: ActiveQ | null = null
 let selectedTeamIdx = 0
-const imgStaging: Record<string, string> = {}
+const mediaStaging: Record<string, QuestionMedia | null> = {}
 
 // ── Persistence ──
 
@@ -59,7 +59,7 @@ function cloneTemplate(id: string): HTMLElement {
   return el.cloneNode(true) as HTMLElement
 }
 
-function clearRecord(rec: Record<string, string>): void {
+function clearRecord(rec: Record<string, unknown>): void {
   for (const k of Object.keys(rec)) delete rec[k]
 }
 
@@ -72,6 +72,139 @@ function $(id: string): HTMLElement {
 function nextColor(): CategoryColor {
   const usedColors = new Set(data.categories.map((c) => c.color))
   return COLOR_ORDER.find((c) => !usedColors.has(c)) ?? CATEGORY_COLOR.blue
+}
+
+// ── YouTube ──
+
+function parseYoutubeUrl(raw: string): { videoId: string; startSeconds: number | undefined } | undefined {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return undefined
+  }
+
+  let videoId: string | undefined
+  const host = url.hostname.replace(/^www\./, '').replace(/^m\./, '')
+
+  if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    if (url.pathname === '/watch') {
+      videoId = url.searchParams.get('v') ?? undefined
+    } else if (url.pathname.startsWith('/embed/')) {
+      videoId = url.pathname.slice('/embed/'.length).split('/')[0]
+    }
+  } else if (host === 'youtu.be') {
+    videoId = url.pathname.slice(1).split('/')[0]
+  }
+
+  if (!videoId) return undefined
+
+  const tParam = url.searchParams.get('t') ?? url.searchParams.get('start')
+  const startSeconds = tParam ? parseInt(tParam, 10) : undefined
+
+  return { videoId, startSeconds: Number.isFinite(startSeconds) ? startSeconds : undefined }
+}
+
+let ytApiReady = false
+let ytApiLoading = false
+let ytPlayer: YT.Player | null = null
+const ytReadyCallbacks: Array<() => void> = []
+
+function ensureYoutubeApi(): Promise<void> {
+  if (ytApiReady) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    ytReadyCallbacks.push(resolve)
+    if (ytApiLoading) return
+    ytApiLoading = true
+    window.onYouTubeIframeAPIReady = () => {
+      ytApiReady = true
+      ytApiLoading = false
+      for (const cb of ytReadyCallbacks) cb()
+      ytReadyCallbacks.length = 0
+    }
+    const script = document.createElement('script')
+    script.src = 'https://www.youtube.com/iframe_api'
+    document.head.appendChild(script)
+  })
+}
+
+function destroyYoutubePlayer(): void {
+  if (!ytPlayer) return
+  try { ytPlayer.destroy() } catch { /* player already gone */ }
+  ytPlayer = null
+}
+
+let ytPlaying = false
+
+function updatePlayButton(): void {
+  const btn = document.getElementById('m-yt-play-btn')
+  if (!btn) return
+  btn.textContent = ytPlaying ? '⏸' : '🔊'
+  btn.classList.toggle('playing', ytPlaying)
+}
+
+function toggleYoutubePlayback(): void {
+  if (!ytPlayer) return
+  if (ytPlaying) {
+    ytPlayer.pauseVideo()
+    ytPlaying = false
+  } else {
+    ytPlayer.playVideo()
+    ytPlaying = true
+  }
+  updatePlayButton()
+}
+
+function createYoutubePlayer(containerId: string, videoId: string, startSeconds?: number, endSeconds?: number): void {
+  destroyYoutubePlayer()
+  ytPlaying = false
+  const container = document.getElementById(containerId)
+  if (!container) return
+
+  container.textContent = ''
+
+  const hiddenPlayer = document.createElement('div')
+  hiddenPlayer.className = 'yt-hidden-player'
+  const target = document.createElement('div')
+  hiddenPlayer.appendChild(target)
+  container.appendChild(hiddenPlayer)
+
+  const playBtn = document.createElement('button')
+  playBtn.type = 'button'
+  playBtn.id = 'm-yt-play-btn'
+  playBtn.className = 'yt-play-btn'
+  playBtn.textContent = '🔊'
+  playBtn.dataset.action = 'yt-toggle-play'
+  container.appendChild(playBtn)
+
+  ensureYoutubeApi().then(() => {
+    ytPlayer = new YT.Player(target, {
+      videoId,
+      width: 1,
+      height: 1,
+      playerVars: {
+        autoplay: 0,
+        ...(startSeconds !== undefined ? { start: startSeconds } : {}),
+        ...(endSeconds !== undefined ? { end: endSeconds } : {}),
+        rel: 0,
+        fs: 0,
+      },
+      events: {
+        onStateChange: (event: YT.OnStateChangeEvent) => {
+          // 0 = ended
+          if (event.data === 0) {
+            ytPlaying = false
+            updatePlayButton()
+          }
+        },
+      },
+    })
+  })
+}
+
+function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
+  let timer: ReturnType<typeof setTimeout>
+  return ((...args: Parameters<T>) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms) }) as T
 }
 
 // ── Mode ──
@@ -462,12 +595,23 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
 
   const imgWrap = $('m-image-wrap')
   const imgEl = $('m-image') as HTMLImageElement
-  if (q.img) {
-    imgEl.src = q.img
+  const ytWrap = $('m-yt-wrap')
+
+  destroyYoutubePlayer()
+
+  if (q.media?.type === MEDIA_TYPE.image) {
+    imgEl.src = q.media.src
     imgWrap.style.display = 'flex'
+    ytWrap.style.display = 'none'
+  } else if (q.media?.type === MEDIA_TYPE.youtube) {
+    imgEl.src = ''
+    imgWrap.style.display = 'none'
+    ytWrap.style.display = 'flex'
+    createYoutubePlayer('m-yt-player', q.media.videoId, q.media.startSeconds, q.media.endSeconds)
   } else {
     imgEl.src = ''
     imgWrap.style.display = 'none'
+    ytWrap.style.display = 'none'
   }
 
   $('btn-reveal').style.display = 'inline-flex'
@@ -516,6 +660,7 @@ function markUsed(): void {
 }
 
 function closeQModal(): void {
+  destroyYoutubePlayer()
   $('q-overlay').style.display = 'none'
   activeQ = null
 }
@@ -856,7 +1001,7 @@ function readQuestionFromDOM(currentType: QuestionType): Question {
 }
 
 function convertQuestion(from: Question, toType: QuestionType): Question {
-  const base = { q: from.q, ...(from.img ? { img: from.img } : {}), ...(from.audio ? { audio: from.audio } : {}) }
+  const base = { q: from.q, ...(from.media ? { media: from.media } : {}) }
 
   switch (toType) {
     case QUESTION_TYPE.open:
@@ -979,25 +1124,51 @@ function editCell(ci: number, qi: number): void {
   renderAnswerFields(answerContainer, question)
   content.appendChild(answerContainer)
 
-  const imgLabel = document.createElement('div')
-  imgLabel.className = 'field-label'
-  imgLabel.textContent = 'Image (optional)'
-  content.appendChild(imgLabel)
+  const mediaLabel = document.createElement('div')
+  mediaLabel.className = 'field-label'
+  mediaLabel.textContent = 'Media (optional)'
+  content.appendChild(mediaLabel)
 
-  const imgZone = document.createElement('div')
-  imgZone.className = 'img-upload-zone'
-
-  const preview = document.createElement('img')
-  preview.className = 'img-preview-thumb'
-  preview.id = 'cell-img-preview'
-  preview.alt = 'Question image preview'
-  if (question.img) {
-    preview.src = question.img
-    preview.style.display = 'block'
-  } else {
-    preview.style.display = 'none'
+  const mediaTypeSelect = document.createElement('select')
+  mediaTypeSelect.className = 'edit-input'
+  mediaTypeSelect.id = 'cell-media-type'
+  for (const [value, label] of [['none', 'None'], ['image', 'Image'], ['youtube', 'YouTube Music']] as const) {
+    const opt = document.createElement('option')
+    opt.value = value
+    opt.textContent = label
+    if (question.media?.type === value || (!question.media && value === 'none')) opt.selected = true
+    mediaTypeSelect.appendChild(opt)
   }
-  imgZone.appendChild(preview)
+  content.appendChild(mediaTypeSelect)
+
+  const mediaSection = document.createElement('div')
+  mediaSection.className = 'media-section'
+
+  // Image sub-section
+  const imageSection = document.createElement('div')
+  imageSection.id = 'cell-media-image'
+  imageSection.className = 'media-subsection'
+  imageSection.style.display = question.media?.type === MEDIA_TYPE.image ? '' : 'none'
+
+  const imgUrlInput = document.createElement('input')
+  imgUrlInput.type = 'url'
+  imgUrlInput.className = 'edit-input'
+  imgUrlInput.id = 'cell-img-url'
+  imgUrlInput.placeholder = 'Paste image URL...'
+  if (question.media?.type === MEDIA_TYPE.image && question.media.src.startsWith('http')) {
+    imgUrlInput.value = question.media.src
+  }
+  imageSection.appendChild(imgUrlInput)
+
+  const imgUrlError = document.createElement('div')
+  imgUrlError.className = 'media-error'
+  imgUrlError.id = 'cell-img-url-error'
+  imageSection.appendChild(imgUrlError)
+
+  const orText = document.createElement('div')
+  orText.className = 'media-or'
+  orText.textContent = 'or'
+  imageSection.appendChild(orText)
 
   const imgBtnRow = document.createElement('div')
   imgBtnRow.style.cssText = 'display:flex;gap:8px;align-items:center'
@@ -1014,13 +1185,25 @@ function editCell(ci: number, qi: number): void {
   clearBtn.className = 'img-clear-btn'
   clearBtn.id = 'cell-img-clear'
   clearBtn.textContent = 'Remove'
-  clearBtn.dataset.action = 'cell-clear-image'
+  clearBtn.dataset.action = 'cell-clear-media'
   clearBtn.dataset.ci = String(ci)
   clearBtn.dataset.qi = String(qi)
-  clearBtn.style.display = question.img ? 'inline-block' : 'none'
+  clearBtn.style.display = question.media?.type === MEDIA_TYPE.image ? 'inline-block' : 'none'
   imgBtnRow.appendChild(clearBtn)
 
-  imgZone.appendChild(imgBtnRow)
+  imageSection.appendChild(imgBtnRow)
+
+  const preview = document.createElement('img')
+  preview.className = 'img-preview-thumb'
+  preview.id = 'cell-img-preview'
+  preview.alt = 'Question image preview'
+  if (question.media?.type === MEDIA_TYPE.image) {
+    preview.src = question.media.src
+    preview.style.display = 'block'
+  } else {
+    preview.style.display = 'none'
+  }
+  imageSection.appendChild(preview)
 
   const fileInput = document.createElement('input')
   fileInput.type = 'file'
@@ -1029,9 +1212,79 @@ function editCell(ci: number, qi: number): void {
   fileInput.dataset.ci = String(ci)
   fileInput.dataset.qi = String(qi)
   fileInput.style.display = 'none'
-  imgZone.appendChild(fileInput)
+  imageSection.appendChild(fileInput)
 
-  content.appendChild(imgZone)
+  mediaSection.appendChild(imageSection)
+
+  // YouTube sub-section
+  const ytSection = document.createElement('div')
+  ytSection.id = 'cell-media-youtube'
+  ytSection.className = 'media-subsection'
+  ytSection.style.display = question.media?.type === MEDIA_TYPE.youtube ? '' : 'none'
+
+  const ytUrlInput = document.createElement('input')
+  ytUrlInput.type = 'url'
+  ytUrlInput.className = 'edit-input'
+  ytUrlInput.id = 'cell-yt-url'
+  ytUrlInput.placeholder = 'Paste YouTube URL...'
+  if (question.media?.type === MEDIA_TYPE.youtube) {
+    ytUrlInput.value = `https://www.youtube.com/watch?v=${question.media.videoId}`
+  }
+  ytSection.appendChild(ytUrlInput)
+
+  const ytError = document.createElement('div')
+  ytError.className = 'media-error'
+  ytError.id = 'cell-yt-error'
+  ytSection.appendChild(ytError)
+
+  const ytThumb = document.createElement('img')
+  ytThumb.className = 'media-yt-thumb'
+  ytThumb.id = 'cell-yt-thumb'
+  ytThumb.alt = 'YouTube thumbnail'
+  if (question.media?.type === MEDIA_TYPE.youtube) {
+    ytThumb.src = `https://img.youtube.com/vi/${question.media.videoId}/hqdefault.jpg`
+    ytThumb.style.display = 'block'
+  } else {
+    ytThumb.style.display = 'none'
+  }
+  ytSection.appendChild(ytThumb)
+
+  const timeRow = document.createElement('div')
+  timeRow.className = 'media-time-row'
+
+  const startLabel = document.createElement('label')
+  startLabel.textContent = 'Start (sec)'
+  timeRow.appendChild(startLabel)
+
+  const startInput = document.createElement('input')
+  startInput.type = 'number'
+  startInput.className = 'edit-input'
+  startInput.id = 'cell-yt-start'
+  startInput.min = '0'
+  startInput.placeholder = '0'
+  if (question.media?.type === MEDIA_TYPE.youtube && question.media.startSeconds !== undefined) {
+    startInput.value = String(question.media.startSeconds)
+  }
+  timeRow.appendChild(startInput)
+
+  const endLabel = document.createElement('label')
+  endLabel.textContent = 'End (sec)'
+  timeRow.appendChild(endLabel)
+
+  const endInput = document.createElement('input')
+  endInput.type = 'number'
+  endInput.className = 'edit-input'
+  endInput.id = 'cell-yt-end'
+  endInput.min = '0'
+  endInput.placeholder = ''
+  if (question.media?.type === MEDIA_TYPE.youtube && question.media.endSeconds !== undefined) {
+    endInput.value = String(question.media.endSeconds)
+  }
+  timeRow.appendChild(endInput)
+
+  ytSection.appendChild(timeRow)
+  mediaSection.appendChild(ytSection)
+  content.appendChild(mediaSection)
 
   const actions = document.createElement('div')
   actions.className = 'cell-editor-actions'
@@ -1057,6 +1310,49 @@ function editCell(ci: number, qi: number): void {
   $('edit-overlay').style.display = 'flex'
 }
 
+function readMediaFromEditForm(ci: number, qi: number, existingMedia: QuestionMedia | undefined): QuestionMedia | undefined {
+  const typeSelect = document.getElementById('cell-media-type') as HTMLSelectElement | null
+  if (!typeSelect) return existingMedia
+
+  switch (typeSelect.value) {
+    case 'none':
+      return undefined
+
+    case 'image': {
+      const key = `${ci}-${qi}`
+      const staged = mediaStaging[key]
+      if (staged && staged.type === MEDIA_TYPE.image) return staged
+
+      const urlInput = document.getElementById('cell-img-url') as HTMLInputElement | null
+      const urlVal = urlInput?.value.trim()
+      if (urlVal) return { type: MEDIA_TYPE.image, src: urlVal }
+
+      if (existingMedia?.type === MEDIA_TYPE.image) return existingMedia
+      return undefined
+    }
+
+    case 'youtube': {
+      const urlInput = document.getElementById('cell-yt-url') as HTMLInputElement | null
+      const parsed = urlInput?.value ? parseYoutubeUrl(urlInput.value) : undefined
+      if (!parsed) {
+        if (existingMedia?.type === MEDIA_TYPE.youtube) return existingMedia
+        return undefined
+      }
+      const startEl = document.getElementById('cell-yt-start') as HTMLInputElement | null
+      const endEl = document.getElementById('cell-yt-end') as HTMLInputElement | null
+      const startVal = startEl?.value ? Number(startEl.value) : undefined
+      const endVal = endEl?.value ? Number(endEl.value) : undefined
+      const result: QuestionMedia = { type: MEDIA_TYPE.youtube, videoId: parsed.videoId }
+      if (startVal !== undefined && Number.isFinite(startVal)) result.startSeconds = startVal
+      if (endVal !== undefined && Number.isFinite(endVal)) result.endSeconds = endVal
+      return result
+    }
+
+    default:
+      return undefined
+  }
+}
+
 function saveCellEdit(ci: number, qi: number): void {
   const cat = data.categories[ci]
   if (!cat) return
@@ -1066,21 +1362,14 @@ function saveCellEdit(ci: number, qi: number): void {
 
   const newQ = readQuestionFromDOM(editingQuestionType)
 
-  const imgKey = `${ci}-${qi}`
-  const imgValue = imgStaging[imgKey]
-  if (imgValue !== undefined) {
-    if (imgValue) {
-      newQ.img = imgValue
-    } else {
-      delete newQ.img
-    }
-  } else {
-    const oldQ = cat.questions[qi]
-    if (oldQ?.img) newQ.img = oldQ.img
+  const oldQ = cat.questions[qi]
+  const media = readMediaFromEditForm(ci, qi, oldQ?.media)
+  if (media) {
+    newQ.media = media
   }
 
   cat.questions[qi] = newQ
-  clearRecord(imgStaging)
+  clearRecord(mediaStaging)
   saveData()
   renderAll()
   closeEditModal()
@@ -1097,13 +1386,13 @@ function resetAll(): void {
   renderAll()
 }
 
-// ── Image Upload ──
+// ── Media Upload ──
 
-function handleImgUpload(ci: number, qi: number, file: File, previewId: string, clearBtnId: string): void {
+function handleMediaFileUpload(ci: number, qi: number, file: File, previewId: string, clearBtnId: string): void {
   const reader = new FileReader()
   reader.onload = (e) => {
     const base64 = (e.target as FileReader).result as string
-    imgStaging[`${ci}-${qi}`] = base64
+    mediaStaging[`${ci}-${qi}`] = { type: MEDIA_TYPE.image, src: base64 }
     const preview = document.getElementById(previewId) as HTMLImageElement | null
     if (preview) {
       preview.src = base64
@@ -1111,6 +1400,10 @@ function handleImgUpload(ci: number, qi: number, file: File, previewId: string, 
     }
     const clearBtn = document.getElementById(clearBtnId)
     if (clearBtn) clearBtn.style.display = 'inline-block'
+    const urlInput = document.getElementById('cell-img-url') as HTMLInputElement | null
+    if (urlInput) urlInput.value = ''
+    const urlError = document.getElementById('cell-img-url-error')
+    if (urlError) urlError.textContent = ''
   }
   reader.readAsDataURL(file)
 }
@@ -1118,7 +1411,7 @@ function handleImgUpload(ci: number, qi: number, file: File, previewId: string, 
 // ── Admin Panel ──
 
 function handleAdminImgUpload(ci: number, qi: number, file: File): void {
-  handleImgUpload(ci, qi, file, `adm-img-preview-${ci}-${qi}`, `adm-img-clear-${ci}-${qi}`)
+  handleMediaFileUpload(ci, qi, file, `adm-img-preview-${ci}-${qi}`, `adm-img-clear-${ci}-${qi}`)
 }
 
 function saveAdmin(): void {
@@ -1142,19 +1435,19 @@ function saveAdmin(): void {
       const question = cat.questions[qi]
       if (!question) continue
 
-      const imgKey = `${ci}-${qi}`
-      const imgValue = imgStaging[imgKey]
-      if (imgValue !== undefined) {
-        if (imgValue) {
-          question.img = imgValue
+      const mediaKey = `${ci}-${qi}`
+      const mediaValue = mediaStaging[mediaKey]
+      if (mediaValue !== undefined) {
+        if (mediaValue) {
+          question.media = mediaValue
         } else {
-          delete question.img
+          delete question.media
         }
       }
     }
   }
 
-  clearRecord(imgStaging)
+  clearRecord(mediaStaging)
   saveData()
   renderAll()
   closeAdmin()
@@ -1348,6 +1641,7 @@ function setupEvents(): void {
     'keydown',
     (e) => {
       if (e.key === 'Escape') {
+        destroyYoutubePlayer()
         for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay', 'team-setup-overlay']) {
           $(id).style.display = 'none'
         }
@@ -1358,6 +1652,7 @@ function setupEvents(): void {
 
   function handleOverlayClick(e: MouseEvent): void {
     if (e.target === e.currentTarget) {
+      if ((e.currentTarget as HTMLElement).id === 'q-overlay') destroyYoutubePlayer()
       ;(e.currentTarget as HTMLElement).style.display = 'none'
     }
   }
@@ -1402,6 +1697,16 @@ function setupEvents(): void {
   $('btn-wrong').addEventListener('click', () => markResult(false), { signal })
   $('btn-skip').addEventListener('click', skipQuestion, { signal })
 
+  $('q-modal').addEventListener(
+    'click',
+    (e) => {
+      const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')
+      if (!target) return
+      if (target.dataset.action === 'yt-toggle-play') toggleYoutubePlayback()
+    },
+    { signal },
+  )
+
   // Edit modal delegation
   $('btn-close-edit').addEventListener('click', closeEditModal, { signal })
   $('edit-modal').addEventListener(
@@ -1423,19 +1728,29 @@ function setupEvents(): void {
           saveCellEdit(Number(target.dataset.ci), Number(target.dataset.qi))
           break
         case 'cancel-cell':
-          clearRecord(imgStaging)
+          clearRecord(mediaStaging)
           closeEditModal()
           break
         case 'cell-choose-image':
           document.getElementById('cell-img-file')?.click()
           break
-        case 'cell-clear-image': {
+        case 'cell-clear-media': {
           const ci = Number(target.dataset.ci)
           const qi = Number(target.dataset.qi)
-          imgStaging[`${ci}-${qi}`] = ''
+          mediaStaging[`${ci}-${qi}`] = null
           const preview = document.getElementById('cell-img-preview') as HTMLImageElement | null
           if (preview) { preview.src = ''; preview.style.display = 'none' }
+          const urlInput = document.getElementById('cell-img-url') as HTMLInputElement | null
+          if (urlInput) urlInput.value = ''
+          const urlError = document.getElementById('cell-img-url-error')
+          if (urlError) urlError.textContent = ''
           target.style.display = 'none'
+          const mediaSelect = document.getElementById('cell-media-type') as HTMLSelectElement | null
+          if (mediaSelect) {
+            mediaSelect.value = 'none'
+            const imgSec = document.getElementById('cell-media-image')
+            if (imgSec) imgSec.style.display = 'none'
+          }
           break
         }
         case 'mc-add-option': {
@@ -1516,11 +1831,80 @@ function setupEvents(): void {
         return
       }
 
+      if (target instanceof HTMLSelectElement && target.id === 'cell-media-type') {
+        const imgSec = document.getElementById('cell-media-image')
+        const ytSec = document.getElementById('cell-media-youtube')
+        if (imgSec) imgSec.style.display = target.value === 'image' ? '' : 'none'
+        if (ytSec) ytSec.style.display = target.value === 'youtube' ? '' : 'none'
+        return
+      }
+
       if (target instanceof HTMLInputElement && target.id === 'cell-img-file') {
         const ci = Number(target.dataset.ci)
         const qi = Number(target.dataset.qi)
         const file = target.files?.[0]
-        if (file) handleImgUpload(ci, qi, file, 'cell-img-preview', 'cell-img-clear')
+        if (file) handleMediaFileUpload(ci, qi, file, 'cell-img-preview', 'cell-img-clear')
+      }
+    },
+    { signal },
+  )
+
+  const debouncedImgUrlCheck = debounce((url: string) => {
+    const errorEl = document.getElementById('cell-img-url-error')
+    const previewEl = document.getElementById('cell-img-preview') as HTMLImageElement | null
+    if (!url) {
+      if (errorEl) errorEl.textContent = ''
+      if (previewEl) previewEl.style.display = 'none'
+      return
+    }
+    const img = new Image()
+    img.onload = () => {
+      if (errorEl) errorEl.textContent = ''
+      if (previewEl) { previewEl.src = url; previewEl.style.display = 'block' }
+      const clearBtn = document.getElementById('cell-img-clear')
+      if (clearBtn) clearBtn.style.display = 'inline-block'
+    }
+    img.onerror = () => {
+      if (errorEl) errorEl.textContent = 'Could not load image from this URL'
+      if (previewEl) previewEl.style.display = 'none'
+    }
+    img.src = url
+  }, 400)
+
+  const debouncedYtUrlCheck = debounce((url: string) => {
+    const errorEl = document.getElementById('cell-yt-error')
+    const thumbEl = document.getElementById('cell-yt-thumb') as HTMLImageElement | null
+    const startEl = document.getElementById('cell-yt-start') as HTMLInputElement | null
+    if (!url) {
+      if (errorEl) errorEl.textContent = ''
+      if (thumbEl) thumbEl.style.display = 'none'
+      return
+    }
+    const parsed = parseYoutubeUrl(url)
+    if (!parsed) {
+      if (errorEl) errorEl.textContent = 'Not a valid YouTube URL'
+      if (thumbEl) thumbEl.style.display = 'none'
+      return
+    }
+    if (errorEl) errorEl.textContent = ''
+    if (thumbEl) {
+      thumbEl.src = `https://img.youtube.com/vi/${parsed.videoId}/hqdefault.jpg`
+      thumbEl.style.display = 'block'
+    }
+    if (parsed.startSeconds !== undefined && startEl && !startEl.value) {
+      startEl.value = String(parsed.startSeconds)
+    }
+  }, 400)
+
+  $('edit-modal').addEventListener(
+    'input',
+    (e) => {
+      const target = e.target as HTMLElement
+      if (target instanceof HTMLInputElement && target.id === 'cell-img-url') {
+        debouncedImgUrlCheck(target.value.trim())
+      }
+      if (target instanceof HTMLInputElement && target.id === 'cell-yt-url') {
+        debouncedYtUrlCheck(target.value.trim())
       }
     },
     { signal },
@@ -1550,7 +1934,7 @@ function setupEvents(): void {
           document.getElementById(`adm-img-file-${ci}-${qi}`)?.click()
           break
         case 'clear-image': {
-          imgStaging[`${ci}-${qi}`] = ''
+          mediaStaging[`${ci}-${qi}`] = null
           const preview = document.getElementById(`adm-img-preview-${ci}-${qi}`) as HTMLImageElement | null
           if (preview) {
             preview.src = ''
