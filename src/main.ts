@@ -1,6 +1,7 @@
 import './style.css'
 import { APP_MODE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, DEFAULT_QUESTION_TEXT, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
 import type { AppData, CategoryColor, Question, QuestionType, QuestionMedia, Team } from './persistence/db.ts'
+import { scoreCorrect, scoreWrong, nextCorrectPreview, streakBonusFor } from './lib/scoring.ts'
 
 type ActiveQ = {
   catIdx: number
@@ -323,8 +324,7 @@ function renderScoreboard(): void {
       streakBadge.className = 'team-streak'
       const capped = Math.min(t.streak, 7)
       streakBadge.style.setProperty('--streak', String(capped))
-      const bonus = 100 * (t.streak - 1)
-      streakBadge.textContent = bonus > 0 ? ` ${t.streak} (+${bonus})` : ` ${t.streak}`
+      streakBadge.textContent = ` ${t.streak}`
       const nameWrap = card.querySelector('.team-name-wrap')
       if (nameWrap) nameWrap.appendChild(streakBadge)
     }
@@ -466,14 +466,14 @@ function renderCurrentTeamLabel(): void {
   label.textContent = `${team.name}'s answer`
 
   const pts = activeQ?.pts ?? 0
-  const nextBonus = 100 * team.streak
-  const nextTotal = pts + nextBonus
+  const nextTotal = nextCorrectPreview(pts, team.streak)
   const info = document.createElement('span')
   info.className = 'current-team-streak-info'
   if (team.streak > 0) {
-    info.textContent = ` — streak ${team.streak} (+${100 * (team.streak - 1)}), next: +${nextTotal}`
+    const bonus = streakBonusFor(team.streak + 1)
+    info.textContent = ` — streak ${team.streak}, worth +${nextTotal} (${pts} + ${bonus} bonus)`
   } else {
-    info.textContent = ` — next: +${nextTotal}`
+    info.textContent = ` — worth +${nextTotal}`
   }
   label.appendChild(info)
 
@@ -691,12 +691,10 @@ function markResult(correct: boolean): void {
   const team = data.teams[data.currentTurnIndex]
   if (!team) return
 
-  if (correct) {
-    team.streak += 1
-    const streakBonus = 100 * (team.streak - 1)
-    team.score += activeQ.pts + streakBonus
-  } else {
-    team.streak = 0
+  const result = correct ? scoreCorrect(activeQ.pts, team.streak) : scoreWrong()
+  team.score += result.points
+  team.streak = result.newStreak
+  if (!correct) {
     data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
   }
 
