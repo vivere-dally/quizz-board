@@ -378,6 +378,51 @@ h1 {
 }
 .add-question-btn:hover { opacity: 1; background: rgba(255,255,255,0.04); }
 
+/* ── TILE BADGES ── */
+.tile-x2 {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.tile-x2::before {
+  content: '×2';
+  position: absolute;
+  top: 3px;
+  left: -8px;
+  width: 40px;
+  text-align: center;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--blue-dark);
+  background: var(--gold);
+  transform: rotate(-45deg);
+  line-height: 16px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.tile--needs-attention .tile-pts { opacity: 0.3; }
+
+.tile-pencil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(1rem, 1.8vw, 1.4rem);
+  color: var(--text-muted);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.tile--needs-attention:hover .tile-pencil { opacity: 0.6; }
+
 /* ── CONTROLS ── */
 .controls {
   display: flex;
@@ -461,6 +506,14 @@ h1 {
   color: var(--cat-accent, var(--gold));
   line-height: 1;
   margin-bottom: 6px;
+}
+
+.modal-x2-badge {
+  font-size: 1.2rem;
+  color: var(--gold);
+  opacity: 0.7;
+  margin-left: 6px;
+  vertical-align: super;
 }
 
 .modal-cat {
@@ -742,6 +795,23 @@ h1 {
 }
 
 .ec-pts-input:focus { border-color: var(--gold); }
+
+.x2-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.x2-toggle__checkbox {
+  accent-color: var(--gold);
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}
 
 .ec-remove-btn {
   background: rgba(239,68,68,0.1);

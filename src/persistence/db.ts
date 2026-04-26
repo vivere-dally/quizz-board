@@ -36,6 +36,7 @@ export type QuestionMedia = ImageMedia | YoutubeMedia
 type QuestionBase = {
   q: string
   media?: QuestionMedia
+  x2?: boolean
 }
 
 export type OpenQuestion = QuestionBase & {
@@ -72,8 +73,11 @@ export type Question =
   | OrderingQuestion
   | NumericQuestion
 
+export const DEFAULT_QUESTION_TEXT = 'Write your question'
+export const DEFAULT_ANSWER_TEXT = 'Write your answer'
+
 export function defaultQuestion(): OpenQuestion {
-  return { type: QUESTION_TYPE.open, q: 'Write your question', a: 'Write your answer' }
+  return { type: QUESTION_TYPE.open, q: DEFAULT_QUESTION_TEXT, a: DEFAULT_ANSWER_TEXT }
 }
 
 export function answerDisplayText(q: Question): string {
@@ -120,7 +124,7 @@ export type AppData = {
 // ── Database ──
 
 const DB_NAME = 'quizboard'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE_NAME = 'app'
 const DOC_KEY = 'current'
 
@@ -160,6 +164,7 @@ function isValidQuestion(q: unknown): boolean {
   if (!isRecord(q)) return false
   if (typeof q.q !== 'string') return false
   if ('media' in q && q.media !== undefined && !isValidMedia(q.media)) return false
+  if ('x2' in q && q.x2 !== undefined && typeof q.x2 !== 'boolean') return false
 
   switch (q.type) {
     case QUESTION_TYPE.open:

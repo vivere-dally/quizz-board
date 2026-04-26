@@ -1,5 +1,5 @@
 import './style.css'
-import { APP_MODE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
+import { APP_MODE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, DEFAULT_QUESTION_TEXT, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
 import type { AppData, CategoryColor, Question, QuestionType, QuestionMedia } from './persistence/db.ts'
 
 type ActiveQ = {
@@ -72,6 +72,10 @@ function $(id: string): HTMLElement {
 function nextColor(): CategoryColor {
   const usedColors = new Set(data.categories.map((c) => c.color))
   return COLOR_ORDER.find((c) => !usedColors.has(c)) ?? CATEGORY_COLOR.blue
+}
+
+function needsAttention(q: Question): boolean {
+  return q.q === DEFAULT_QUESTION_TEXT || q.q.trim() === ''
 }
 
 // ── YouTube ──
@@ -369,15 +373,30 @@ function renderBoard(): void {
     col.appendChild(header)
 
     for (const [qi, pts] of cat.points.entries()) {
+      const question = cat.questions[qi]
       const tile = cloneTemplate('tmpl-tile')
       const tileBtn = tile as HTMLButtonElement
       tileBtn.dataset.ci = String(ci)
       tileBtn.dataset.qi = String(qi)
 
+      const displayPts = !isEdit && question?.x2 ? pts * 2 : pts
       const ptsSpan = tileBtn.querySelector('.tile-pts') as HTMLElement
-      ptsSpan.textContent = String(pts)
+      ptsSpan.textContent = String(displayPts)
+
+      if (question?.x2) {
+        const x2Badge = document.createElement('span')
+        x2Badge.className = 'tile-x2'
+        tileBtn.appendChild(x2Badge)
+      }
 
       if (isEdit) {
+        if (question && needsAttention(question)) {
+          tileBtn.classList.add('tile--needs-attention')
+          const pencil = document.createElement('span')
+          pencil.className = 'tile-pencil'
+          pencil.textContent = '✎'
+          tileBtn.appendChild(pencil)
+        }
         if (cat.questions.length > 1) {
           const tileRemove = document.createElement('span')
           tileRemove.className = 'tile-remove'
@@ -582,7 +601,14 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   modal.className = 'modal'
   modal.dataset.color = cat.color
 
-  $('m-pts').textContent = String(pts)
+  const mPts = $('m-pts')
+  mPts.textContent = String(pts)
+  if (q.x2) {
+    const x2Badge = document.createElement('span')
+    x2Badge.className = 'modal-x2-badge'
+    x2Badge.textContent = '×2'
+    mPts.appendChild(x2Badge)
+  }
   $('m-cat').textContent = cat.name.toUpperCase()
   $('m-question').textContent = q.q
 
@@ -1001,7 +1027,7 @@ function readQuestionFromDOM(currentType: QuestionType): Question {
 }
 
 function convertQuestion(from: Question, toType: QuestionType): Question {
-  const base = { q: from.q, ...(from.media ? { media: from.media } : {}) }
+  const base = { q: from.q, ...(from.media ? { media: from.media } : {}), ...(from.x2 ? { x2: true as const } : {}) }
 
   switch (toType) {
     case QUESTION_TYPE.open:
@@ -1088,6 +1114,17 @@ function editCell(ci: number, qi: number): void {
   ptsInput.step = '50'
   ptsInput.style.width = '100%'
   content.appendChild(ptsInput)
+
+  const x2Label = document.createElement('label')
+  x2Label.className = 'x2-toggle'
+  const x2Checkbox = document.createElement('input')
+  x2Checkbox.type = 'checkbox'
+  x2Checkbox.className = 'x2-toggle__checkbox'
+  x2Checkbox.id = 'cell-x2'
+  x2Checkbox.checked = question.x2 === true
+  x2Label.appendChild(x2Checkbox)
+  x2Label.appendChild(document.createTextNode('×2 Multiplier'))
+  content.appendChild(x2Label)
 
   editingQuestionType = question.type
 
@@ -1361,6 +1398,9 @@ function saveCellEdit(ci: number, qi: number): void {
   if (ptsEl) cat.points[qi] = Number(ptsEl.value) || 100
 
   const newQ = readQuestionFromDOM(editingQuestionType)
+
+  const x2El = document.getElementById('cell-x2') as HTMLInputElement | null
+  if (x2El?.checked) newQ.x2 = true
 
   const oldQ = cat.questions[qi]
   const media = readMediaFromEditForm(ci, qi, oldQ?.media)
@@ -2114,7 +2154,9 @@ function setupEvents(): void {
           const ci = Number(tile.dataset.ci)
           const qi = Number(tile.dataset.qi)
           const cat = data.categories[ci]
-          const pts = cat?.points[qi]
+          const basePts = cat?.points[qi]
+          const question = cat?.questions[qi]
+          const pts = basePts !== undefined && question?.x2 ? basePts * 2 : basePts
           if (pts !== undefined) openQuestion(ci, qi, pts)
         }
       }
