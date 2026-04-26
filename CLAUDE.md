@@ -122,6 +122,8 @@ npm test:e2e     # Playwright
 
 `npm build` runs `tsc --noEmit` before `vite build` — Vite does not type-check on its own.
 
+You don't need to run `npm run dev` yourself. It should be done by the developer. If you can't reach the dev server, ask the developer.
+
 ## Coding philosophy
 
 - Comments explain `WHY`, not `WHAT`. The code already says what.

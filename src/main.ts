@@ -1,6 +1,6 @@
 import './style.css'
 import { APP_MODE, CATEGORY_COLOR, loadAppData, saveAppData } from './persistence/db.ts'
-import type { AppData, Category, CategoryColor, Question } from './persistence/db.ts'
+import type { AppData, Category, CategoryColor } from './persistence/db.ts'
 
 type ActiveQ = {
   catIdx: number
@@ -22,86 +22,7 @@ const MAX_CATEGORIES = 12
 
 const data: AppData = {
   mode: APP_MODE.edit,
-  categories: [
-    {
-      id: crypto.randomUUID(),
-      name: 'Science',
-      color: CATEGORY_COLOR.blue,
-      points: [100, 200, 300, 400, 500],
-      questions: [
-        { q: 'What planet is known as the Red Planet?', a: 'Mars' },
-        { q: 'What is the chemical symbol for water?', a: 'H₂O' },
-        { q: 'How many bones are in the adult human body?', a: '206' },
-        { q: 'What force keeps planets in orbit around the sun?', a: 'Gravity' },
-        { q: 'What is the speed of light in a vacuum (approx)?', a: '299,792,458 m/s (~3×10⁸ m/s)' },
-      ],
-    },
-    {
-      id: crypto.randomUUID(),
-      name: 'History',
-      color: CATEGORY_COLOR.orange,
-      points: [100, 200, 300, 400, 500],
-      questions: [
-        { q: 'In what year did World War II end?', a: '1945' },
-        { q: 'Who was the first President of the United States?', a: 'George Washington' },
-        { q: 'Which empire built the Colosseum?', a: 'The Roman Empire' },
-        { q: 'In what year did the Berlin Wall fall?', a: '1989' },
-        { q: 'Who was the longest-reigning British monarch?', a: 'Queen Elizabeth II (70 years)' },
-      ],
-    },
-    {
-      id: crypto.randomUUID(),
-      name: 'Geography',
-      color: CATEGORY_COLOR.green,
-      points: [100, 200, 300, 400, 500],
-      questions: [
-        { q: 'What is the capital of Australia?', a: 'Canberra' },
-        { q: 'Which is the longest river in the world?', a: 'The Nile' },
-        { q: 'What country has the most natural lakes?', a: 'Canada' },
-        { q: 'What is the smallest country in the world by area?', a: 'Vatican City' },
-        { q: 'On which continent is the Sahara Desert located?', a: 'Africa' },
-      ],
-    },
-    {
-      id: crypto.randomUUID(),
-      name: 'Pop Culture',
-      color: CATEGORY_COLOR.purple,
-      points: [100, 200, 300, 400, 500],
-      questions: [
-        { q: "Which movie features the line 'To infinity and beyond!'?", a: 'Toy Story' },
-        { q: 'What band was Freddie Mercury the lead singer of?', a: 'Queen' },
-        { q: "Which TV show featured characters living at 'The Peach Pit'?", a: 'Beverly Hills, 90210' },
-        { q: 'What year was the first iPhone released?', a: '2007' },
-        { q: 'Who wrote the Harry Potter book series?', a: 'J.K. Rowling' },
-      ],
-    },
-    {
-      id: crypto.randomUUID(),
-      name: 'Sports',
-      color: CATEGORY_COLOR.red,
-      points: [100, 200, 300, 400, 500],
-      questions: [
-        { q: 'How many players are on a standard soccer (football) team?', a: '11' },
-        { q: 'In what city are the 2028 Summer Olympics being held?', a: 'Los Angeles' },
-        { q: 'Which country has won the most FIFA World Cups?', a: 'Brazil (5 times)' },
-        { q: 'What sport uses a puck?', a: 'Ice Hockey' },
-        { q: 'How long is a standard marathon in kilometers?', a: '42.195 km' },
-      ],
-    },
-    {
-      id: crypto.randomUUID(),
-      name: 'Words & Language',
-      color: CATEGORY_COLOR.teal,
-      points: [100, 200, 300, 400, 500],
-      questions: [
-        { q: 'What is a word that reads the same forwards and backwards?', a: "Palindrome (e.g. 'racecar')" },
-        { q: 'How many letters are in the English alphabet?', a: '26' },
-        { q: 'What is the most spoken language in the world by native speakers?', a: 'Mandarin Chinese' },
-        { q: "What does the word 'ubiquitous' mean?", a: 'Present, appearing, or found everywhere' },
-        { q: 'Which punctuation mark looks like a period with a comma below it?', a: 'Semicolon ( ; )' },
-      ],
-    },
-  ],
+  categories: [],
   teams: [],
   used: {},
 }
@@ -176,8 +97,13 @@ function renderAll(): void {
 
 function renderSubtitle(): void {
   const el = $('subtitle')
+  el.textContent = ''
   if (data.mode === APP_MODE.edit) {
-    el.textContent = 'Click a category to edit • Click a tile to edit a question'
+    const badge = document.createElement('span')
+    badge.className = 'edit-mode-badge'
+    badge.textContent = 'Edit Mode'
+    el.appendChild(badge)
+    el.appendChild(document.createTextNode(' Click a title to rename • Click a tile to edit'))
   } else {
     el.textContent = 'Click a tile to play'
   }
@@ -204,6 +130,13 @@ function renderControls(): void {
     editAllBtn.textContent = '⚙ Edit All Questions'
     editAllBtn.dataset.action = 'edit-all'
     frag.appendChild(editAllBtn)
+
+    const resetBtn = document.createElement('button')
+    resetBtn.type = 'button'
+    resetBtn.className = 'ctrl-btn danger'
+    resetBtn.textContent = '↺ Reset'
+    resetBtn.dataset.action = 'reset-all'
+    frag.appendChild(resetBtn)
 
     const playBtn = document.createElement('button')
     playBtn.type = 'button'
@@ -261,6 +194,27 @@ function renderBoard(): void {
   const frag = document.createDocumentFragment()
   const isEdit = data.mode === APP_MODE.edit
 
+  if (isEdit && data.categories.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'board-empty'
+    const icon = document.createElement('div')
+    icon.className = 'board-empty__icon'
+    icon.textContent = '＋'
+    empty.appendChild(icon)
+    const text = document.createElement('div')
+    text.className = 'board-empty__text'
+    text.textContent = 'No categories yet'
+    empty.appendChild(text)
+    const hint = document.createElement('div')
+    hint.className = 'board-empty__hint'
+    hint.textContent = 'Add a category to start building your quiz board'
+    empty.appendChild(hint)
+    frag.appendChild(empty)
+    el.textContent = ''
+    el.appendChild(frag)
+    return
+  }
+
   for (const [ci, cat] of data.categories.entries()) {
     const col = document.createElement('div')
     col.className = 'board-column'
@@ -300,7 +254,7 @@ function renderBoard(): void {
       col.appendChild(tileBtn)
     }
 
-    if (isEdit && data.categories.length > 1) {
+    if (isEdit) {
       const removeBtn = document.createElement('button')
       removeBtn.type = 'button'
       removeBtn.className = 'remove-cat-btn'
@@ -416,98 +370,6 @@ function closeQModal(): void {
 
 // ── Category Edit ──
 
-function buildEditQuestionRow(qi: number, pts: number, q: string, a: string, canRemove: boolean, origQi: number): HTMLElement {
-  const wrap = document.createElement('div')
-  wrap.className = 'ec-question-row'
-  wrap.dataset.origQi = String(origQi)
-
-  const header = document.createElement('div')
-  header.className = 'ec-question-header'
-
-  const ptsLabel = document.createElement('span')
-  ptsLabel.className = 'ec-pts-label'
-  ptsLabel.textContent = 'Points:'
-  header.appendChild(ptsLabel)
-
-  const ptsInput = document.createElement('input')
-  ptsInput.type = 'number'
-  ptsInput.className = 'ec-pts-input'
-  ptsInput.value = String(pts)
-  ptsInput.min = '0'
-  ptsInput.step = '50'
-  header.appendChild(ptsInput)
-
-  if (canRemove) {
-    const removeBtn = document.createElement('button')
-    removeBtn.type = 'button'
-    removeBtn.className = 'ec-remove-btn'
-    removeBtn.textContent = '✕'
-    removeBtn.dataset.action = 'remove-question'
-    removeBtn.dataset.qi = String(qi)
-    header.appendChild(removeBtn)
-  }
-
-  wrap.appendChild(header)
-
-  const qLabel = document.createElement('div')
-  qLabel.className = 'field-label'
-  qLabel.style.cssText = 'margin-top:6px;font-size:10px'
-  qLabel.textContent = 'Question'
-  wrap.appendChild(qLabel)
-
-  const qInput = document.createElement('input')
-  qInput.className = 'edit-input ec-q-input'
-  qInput.value = q
-  wrap.appendChild(qInput)
-
-  const aLabel = document.createElement('div')
-  aLabel.className = 'field-label'
-  aLabel.style.fontSize = '10px'
-  aLabel.textContent = 'Answer'
-  wrap.appendChild(aLabel)
-
-  const aInput = document.createElement('input')
-  aInput.className = 'edit-input ec-a-input'
-  aInput.value = a
-  wrap.appendChild(aInput)
-
-  return wrap
-}
-
-function renderEditQuestions(cat: Category): void {
-  const wrap = document.getElementById('ec-questions')
-  if (!wrap) return
-  wrap.textContent = ''
-  const canRemove = cat.questions.length > 1
-  for (const [qi, question] of cat.questions.entries()) {
-    wrap.appendChild(buildEditQuestionRow(qi, cat.points[qi] ?? 100, question.q, question.a, canRemove, qi))
-  }
-}
-
-function readEditFormIntoCategory(ci: number): void {
-  const cat = data.categories[ci]
-  if (!cat) return
-  const rows = document.querySelectorAll('#ec-questions .ec-question-row')
-  const newQuestions: Question[] = []
-  const newPoints: number[] = []
-
-  for (const row of rows) {
-    const ptsEl = row.querySelector('.ec-pts-input') as HTMLInputElement | null
-    const qEl = row.querySelector('.ec-q-input') as HTMLInputElement | null
-    const aEl = row.querySelector('.ec-a-input') as HTMLInputElement | null
-    const origQi = Number((row as HTMLElement).dataset.origQi)
-    const origQuestion = origQi >= 0 ? cat.questions[origQi] : undefined
-
-    newPoints.push(Number(ptsEl?.value) || 100)
-    const question: Question = { q: qEl?.value ?? '', a: aEl?.value ?? '' }
-    if (origQuestion?.img) question.img = origQuestion.img
-    newQuestions.push(question)
-  }
-
-  cat.questions = newQuestions
-  cat.points = newPoints
-}
-
 function editCategory(ci: number): void {
   const cat = data.categories[ci]
   if (!cat) return
@@ -515,8 +377,7 @@ function editCategory(ci: number): void {
   content.textContent = ''
 
   const title = document.createElement('div')
-  title.style.cssText =
-    "font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:.08em;color:var(--gold);margin-bottom:18px"
+  title.className = 'modal-title'
   title.textContent = 'Edit Category'
   content.appendChild(title)
 
@@ -551,26 +412,6 @@ function editCategory(ci: number): void {
   }
   content.appendChild(colorRow)
 
-  const qTitle = document.createElement('div')
-  qTitle.className = 'field-label'
-  qTitle.style.marginTop = '20px'
-  qTitle.textContent = 'Questions'
-  content.appendChild(qTitle)
-
-  const questionsWrap = document.createElement('div')
-  questionsWrap.id = 'ec-questions'
-  content.appendChild(questionsWrap)
-
-  renderEditQuestions(cat)
-
-  const addQBtn = document.createElement('button')
-  addQBtn.type = 'button'
-  addQBtn.className = 'edit-add-btn'
-  addQBtn.textContent = '+ Add Question'
-  addQBtn.dataset.action = 'add-question'
-  addQBtn.dataset.ci = String(ci)
-  content.appendChild(addQBtn)
-
   const saveBtn = document.createElement('button')
   saveBtn.type = 'button'
   saveBtn.className = 'edit-save'
@@ -595,7 +436,6 @@ function saveCategoryEdit(ci: number): void {
     cat.color = color as CategoryColor
   }
 
-  readEditFormIntoCategory(ci)
   saveData()
   renderAll()
   closeEditModal()
@@ -603,6 +443,206 @@ function saveCategoryEdit(ci: number): void {
 
 function closeEditModal(): void {
   $('edit-overlay').style.display = 'none'
+}
+
+// ── Cell Edit ──
+
+function editCell(ci: number, qi: number): void {
+  const cat = data.categories[ci]
+  if (!cat) return
+  const question = cat.questions[qi]
+  if (!question) return
+  const pts = cat.points[qi] ?? 100
+
+  const content = $('edit-content')
+  content.textContent = ''
+
+  const title = document.createElement('div')
+  title.className = 'modal-title'
+  title.textContent = 'Edit Question'
+  content.appendChild(title)
+
+  const context = document.createElement('div')
+  context.className = 'cell-editor-context'
+  const catDot = document.createElement('span')
+  catDot.className = 'cell-editor-dot'
+  catDot.dataset.color = cat.color
+  context.appendChild(catDot)
+  context.appendChild(document.createTextNode(`${cat.name} — ${pts} pts`))
+  content.appendChild(context)
+
+  const ptsLabel = document.createElement('div')
+  ptsLabel.className = 'field-label'
+  ptsLabel.textContent = 'Points'
+  content.appendChild(ptsLabel)
+
+  const ptsInput = document.createElement('input')
+  ptsInput.type = 'number'
+  ptsInput.className = 'ec-pts-input'
+  ptsInput.id = 'cell-pts'
+  ptsInput.value = String(pts)
+  ptsInput.min = '0'
+  ptsInput.step = '50'
+  ptsInput.style.width = '100%'
+  content.appendChild(ptsInput)
+
+  const qLabel = document.createElement('div')
+  qLabel.className = 'field-label'
+  qLabel.textContent = 'Question'
+  content.appendChild(qLabel)
+
+  const qTextarea = document.createElement('textarea')
+  qTextarea.className = 'edit-textarea'
+  qTextarea.id = 'cell-q'
+  qTextarea.value = question.q
+  content.appendChild(qTextarea)
+
+  const aLabel = document.createElement('div')
+  aLabel.className = 'field-label'
+  aLabel.textContent = 'Answer'
+  content.appendChild(aLabel)
+
+  const aInput = document.createElement('input')
+  aInput.className = 'edit-input'
+  aInput.id = 'cell-a'
+  aInput.value = question.a
+  content.appendChild(aInput)
+
+  const imgLabel = document.createElement('div')
+  imgLabel.className = 'field-label'
+  imgLabel.textContent = 'Image (optional)'
+  content.appendChild(imgLabel)
+
+  const imgZone = document.createElement('div')
+  imgZone.className = 'img-upload-zone'
+
+  const preview = document.createElement('img')
+  preview.className = 'img-preview-thumb'
+  preview.id = 'cell-img-preview'
+  preview.alt = 'Question image preview'
+  if (question.img) {
+    preview.src = question.img
+    preview.style.display = 'block'
+  } else {
+    preview.style.display = 'none'
+  }
+  imgZone.appendChild(preview)
+
+  const imgBtnRow = document.createElement('div')
+  imgBtnRow.style.cssText = 'display:flex;gap:8px;align-items:center'
+
+  const chooseBtn = document.createElement('button')
+  chooseBtn.type = 'button'
+  chooseBtn.className = 'img-file-btn'
+  chooseBtn.textContent = 'Choose Image'
+  chooseBtn.dataset.action = 'cell-choose-image'
+  imgBtnRow.appendChild(chooseBtn)
+
+  const clearBtn = document.createElement('button')
+  clearBtn.type = 'button'
+  clearBtn.className = 'img-clear-btn'
+  clearBtn.id = 'cell-img-clear'
+  clearBtn.textContent = 'Remove'
+  clearBtn.dataset.action = 'cell-clear-image'
+  clearBtn.dataset.ci = String(ci)
+  clearBtn.dataset.qi = String(qi)
+  clearBtn.style.display = question.img ? 'inline-block' : 'none'
+  imgBtnRow.appendChild(clearBtn)
+
+  imgZone.appendChild(imgBtnRow)
+
+  const fileInput = document.createElement('input')
+  fileInput.type = 'file'
+  fileInput.accept = 'image/*'
+  fileInput.id = 'cell-img-file'
+  fileInput.dataset.ci = String(ci)
+  fileInput.dataset.qi = String(qi)
+  fileInput.style.display = 'none'
+  imgZone.appendChild(fileInput)
+
+  content.appendChild(imgZone)
+
+  const actions = document.createElement('div')
+  actions.className = 'cell-editor-actions'
+
+  const saveBtn = document.createElement('button')
+  saveBtn.type = 'button'
+  saveBtn.className = 'edit-save'
+  saveBtn.textContent = 'Save'
+  saveBtn.dataset.action = 'save-cell'
+  saveBtn.dataset.ci = String(ci)
+  saveBtn.dataset.qi = String(qi)
+  actions.appendChild(saveBtn)
+
+  const cancelBtn = document.createElement('button')
+  cancelBtn.type = 'button'
+  cancelBtn.className = 'cell-editor-cancel'
+  cancelBtn.textContent = 'Cancel'
+  cancelBtn.dataset.action = 'cancel-cell'
+  actions.appendChild(cancelBtn)
+
+  content.appendChild(actions)
+
+  $('edit-overlay').style.display = 'flex'
+}
+
+function saveCellEdit(ci: number, qi: number): void {
+  const cat = data.categories[ci]
+  if (!cat) return
+  const question = cat.questions[qi]
+  if (!question) return
+
+  const ptsEl = document.getElementById('cell-pts') as HTMLInputElement | null
+  const qEl = document.getElementById('cell-q') as HTMLTextAreaElement | null
+  const aEl = document.getElementById('cell-a') as HTMLInputElement | null
+
+  if (ptsEl) cat.points[qi] = Number(ptsEl.value) || 100
+  if (qEl) question.q = qEl.value
+  if (aEl) question.a = aEl.value
+
+  const imgKey = `${ci}-${qi}`
+  const imgValue = imgStaging[imgKey]
+  if (imgValue !== undefined) {
+    if (imgValue) {
+      question.img = imgValue
+    } else {
+      delete question.img
+    }
+  }
+
+  clearRecord(imgStaging)
+  saveData()
+  renderAll()
+  closeEditModal()
+}
+
+// ── Reset ──
+
+function resetAll(): void {
+  if (!confirm('Delete all categories and reset the board? This cannot be undone.')) return
+  data.categories = []
+  data.teams = []
+  data.used = {}
+  saveData()
+  renderAll()
+}
+
+// ── Image Upload ──
+
+function handleImgUpload(ci: number, qi: number, file: File, previewId: string, clearBtnId: string): void {
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    const base64 = (e.target as FileReader).result as string
+    imgStaging[`${ci}-${qi}`] = base64
+    const preview = document.getElementById(previewId) as HTMLImageElement | null
+    if (preview) {
+      preview.src = base64
+      preview.style.display = 'block'
+    }
+    const clearBtn = document.getElementById(clearBtnId)
+    if (clearBtn) clearBtn.style.display = 'inline-block'
+  }
+  reader.readAsDataURL(file)
 }
 
 // ── Admin Panel ──
@@ -758,19 +798,7 @@ function openAdmin(): void {
 }
 
 function handleAdminImgUpload(ci: number, qi: number, file: File): void {
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    const base64 = (e.target as FileReader).result as string
-    imgStaging[`${ci}-${qi}`] = base64
-    const preview = document.getElementById(`adm-img-preview-${ci}-${qi}`) as HTMLImageElement | null
-    if (preview) {
-      preview.src = base64
-      preview.style.display = 'block'
-    }
-    const clearBtn = document.getElementById(`adm-img-clear-${ci}-${qi}`)
-    if (clearBtn) clearBtn.style.display = 'inline-block'
-  }
-  reader.readAsDataURL(file)
+  handleImgUpload(ci, qi, file, `adm-img-preview-${ci}-${qi}`, `adm-img-clear-${ci}-${qi}`)
 }
 
 function saveAdmin(): void {
@@ -843,7 +871,7 @@ function addCategory(): void {
 
 function removeCategory(ci: number): void {
   const cat = data.categories[ci]
-  if (!cat || data.categories.length <= 1) return
+  if (!cat) return
   if (!confirm(`Remove category "${cat.name}"?`)) return
   data.categories.splice(ci, 1)
   saveData()
@@ -1031,6 +1059,9 @@ function setupEvents(): void {
         case 'edit-all':
           openAdmin()
           break
+        case 'reset-all':
+          resetAll()
+          break
         case 'play-quiz':
           openTeamSetup()
           break
@@ -1071,32 +1102,41 @@ function setupEvents(): void {
           target.classList.add('selected')
           break
         }
-        case 'add-question': {
-          const ci = Number(target.dataset.ci)
-          const cat = data.categories[ci]
-          if (!cat) break
-          readEditFormIntoCategory(ci)
-          const lastPts = cat.points[cat.points.length - 1] ?? 0
-          cat.questions.push({ q: '', a: '' })
-          cat.points.push(lastPts + 100)
-          renderEditQuestions(cat)
+        case 'save-cell':
+          saveCellEdit(Number(target.dataset.ci), Number(target.dataset.qi))
           break
-        }
-        case 'remove-question': {
-          const saveBtnEl = document.querySelector<HTMLElement>('[data-action="save-category"]')
-          const ci = Number(saveBtnEl?.dataset.ci)
-          const cat = data.categories[ci]
-          if (!cat || cat.questions.length <= 1) break
-          readEditFormIntoCategory(ci)
+        case 'cancel-cell':
+          clearRecord(imgStaging)
+          closeEditModal()
+          break
+        case 'cell-choose-image':
+          document.getElementById('cell-img-file')?.click()
+          break
+        case 'cell-clear-image': {
+          const ci = Number(target.dataset.ci)
           const qi = Number(target.dataset.qi)
-          cat.questions.splice(qi, 1)
-          cat.points.splice(qi, 1)
-          renderEditQuestions(cat)
+          imgStaging[`${ci}-${qi}`] = ''
+          const preview = document.getElementById('cell-img-preview') as HTMLImageElement | null
+          if (preview) { preview.src = ''; preview.style.display = 'none' }
+          target.style.display = 'none'
           break
         }
         default:
           break
       }
+    },
+    { signal },
+  )
+
+  $('edit-modal').addEventListener(
+    'change',
+    (e) => {
+      const target = e.target as HTMLInputElement
+      if (target.id !== 'cell-img-file') return
+      const ci = Number(target.dataset.ci)
+      const qi = Number(target.dataset.qi)
+      const file = target.files?.[0]
+      if (file) handleImgUpload(ci, qi, file, 'cell-img-preview', 'cell-img-clear')
     },
     { signal },
   )
@@ -1265,7 +1305,7 @@ function setupEvents(): void {
         }
         const tile = target.closest<HTMLButtonElement>('[data-action="open-question"]')
         if (tile) {
-          editCategory(Number(tile.dataset.ci))
+          editCell(Number(tile.dataset.ci), Number(tile.dataset.qi))
           return
         }
         const removeBtn = target.closest<HTMLElement>('[data-action="remove-category"]')

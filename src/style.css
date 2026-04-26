@@ -46,6 +46,75 @@ h1 {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ── EDIT MODE BADGE ── */
+.edit-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, var(--gold), var(--gold-dark));
+  color: var(--blue-dark);
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 4px 14px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  box-shadow: 0 0 12px rgba(245, 197, 24, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  animation: badge-pulse 3s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(245, 197, 24, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(245, 197, 24, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2); }
+}
+
+/* ── EMPTY BOARD ── */
+.board-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 260px;
+  border: 2px dashed #1e3060;
+  border-radius: 16px;
+  padding: 48px 24px;
+  background: linear-gradient(180deg, rgba(15, 37, 80, 0.3) 0%, rgba(10, 22, 40, 0.3) 100%);
+}
+
+.board-empty__icon {
+  font-size: 3rem;
+  color: #1e3060;
+  line-height: 1;
+  margin-bottom: 16px;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #1e3060;
+  border-radius: 50%;
+}
+
+.board-empty__text {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1.4rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.board-empty__hint {
+  font-size: 13px;
+  color: #5a7aaa;
 }
 
 /* ── SCOREBOARD ── */
@@ -449,6 +518,66 @@ h1 {
 
 /* ── EDIT MODAL ── */
 .edit-modal { max-width: 560px; max-height: 85vh; overflow-y: auto; }
+
+.modal-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1.5rem;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  margin-bottom: 18px;
+}
+
+/* ── CELL EDITOR ── */
+.cell-editor-context {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cell-editor-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cell-editor-dot[data-color="blue"] { background: #2247c4; }
+.cell-editor-dot[data-color="orange"] { background: #ff7a00; }
+.cell-editor-dot[data-color="purple"] { background: #a855f7; }
+.cell-editor-dot[data-color="green"] { background: #22c55e; }
+.cell-editor-dot[data-color="red"] { background: #ef4444; }
+.cell-editor-dot[data-color="teal"] { background: #14b8a6; }
+.cell-editor-dot[data-color="pink"] { background: #ec4899; }
+.cell-editor-dot[data-color="yellow"] { background: #eab308; }
+
+.cell-editor-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.cell-editor-cancel {
+  background: transparent;
+  border: 1.5px solid #2a4080;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-family: 'Barlow', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 11px 28px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.cell-editor-cancel:hover {
+  border-color: var(--gold);
+  color: var(--text-main);
+}
 
 .field-label {
   font-size: 11px;
