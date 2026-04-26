@@ -2,6 +2,7 @@
   "name": "quizz-board",
   "private": true,
   "version": "0.0.0",
+  "authors": ["vivere-dally", "bada"],
   "type": "module",
   "scripts": {
     "dev": "vite",
