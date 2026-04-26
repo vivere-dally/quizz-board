@@ -1,6 +1,6 @@
 import './style.css'
-import { APP_MODE, CATEGORY_COLOR, loadAppData, saveAppData } from './persistence/db.ts'
-import type { AppData, CategoryColor } from './persistence/db.ts'
+import { APP_MODE, CATEGORY_COLOR, QUESTION_TYPE, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
+import type { AppData, CategoryColor, Question, QuestionType } from './persistence/db.ts'
 
 type ActiveQ = {
   catIdx: number
@@ -305,6 +305,138 @@ function renderTeamSelector(): void {
 
 // ── Question Modal ──
 
+function shuffle<T>(arr: readonly T[]): T[] {
+  const out = [...arr]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const tmp = out[i]!
+    out[i] = out[j]!
+    out[j] = tmp
+  }
+  return out
+}
+
+function renderPlayTypeContent(q: Question, container: HTMLElement): void {
+  container.textContent = ''
+
+  switch (q.type) {
+    case QUESTION_TYPE.open:
+      break
+    case QUESTION_TYPE.multipleChoice: {
+      const list = document.createElement('div')
+      list.className = 'play-mc-options'
+      for (const [i, opt] of q.options.entries()) {
+        const card = document.createElement('div')
+        card.className = 'play-mc-option'
+        card.dataset.idx = String(i)
+        const letter = document.createElement('span')
+        letter.className = 'play-mc-letter'
+        letter.textContent = String.fromCharCode(65 + i)
+        card.appendChild(letter)
+        card.appendChild(document.createTextNode(opt))
+        list.appendChild(card)
+      }
+      container.appendChild(list)
+      break
+    }
+    case QUESTION_TYPE.trueFalse: {
+      const row = document.createElement('div')
+      row.className = 'play-tf-row'
+      for (const val of ['True', 'False']) {
+        const card = document.createElement('div')
+        card.className = 'play-tf-option'
+        card.dataset.val = val.toLowerCase()
+        card.textContent = val
+        row.appendChild(card)
+      }
+      container.appendChild(row)
+      break
+    }
+    case QUESTION_TYPE.ordering: {
+      const shuffled = shuffle(q.items)
+      const list = document.createElement('div')
+      list.className = 'play-ord-items'
+      list.dataset.correctOrder = JSON.stringify(q.items)
+      for (const [i, item] of shuffled.entries()) {
+        const card = document.createElement('div')
+        card.className = 'play-ord-item'
+        const num = document.createElement('span')
+        num.className = 'play-ord-num'
+        num.textContent = `${i + 1}.`
+        card.appendChild(num)
+        card.appendChild(document.createTextNode(item))
+        list.appendChild(card)
+      }
+      container.appendChild(list)
+      break
+    }
+    case QUESTION_TYPE.numeric: {
+      const prompt = document.createElement('div')
+      prompt.className = 'play-numeric-prompt'
+      prompt.textContent = q.unit ? `Answer in ${q.unit}` : 'Enter a number'
+      container.appendChild(prompt)
+      break
+    }
+    default: {
+      const _exhaustive: never = q
+      throw new Error(`unreachable: unknown question type ${(_exhaustive as Question).type}`)
+    }
+  }
+}
+
+function revealPlayTypeContent(q: Question, container: HTMLElement): void {
+  switch (q.type) {
+    case QUESTION_TYPE.open:
+      break
+    case QUESTION_TYPE.multipleChoice: {
+      const options = container.querySelectorAll<HTMLElement>('.play-mc-option')
+      for (const opt of options) {
+        const idx = Number(opt.dataset.idx)
+        if (idx === q.correctIndex) {
+          opt.classList.add('correct')
+        } else {
+          opt.classList.add('dimmed')
+        }
+      }
+      break
+    }
+    case QUESTION_TYPE.trueFalse: {
+      const correctVal = q.correctAnswer ? 'true' : 'false'
+      const options = container.querySelectorAll<HTMLElement>('.play-tf-option')
+      for (const opt of options) {
+        if (opt.dataset.val === correctVal) {
+          opt.classList.add('correct')
+        } else {
+          opt.classList.add('dimmed')
+        }
+      }
+      break
+    }
+    case QUESTION_TYPE.ordering: {
+      const list = container.querySelector('.play-ord-items')
+      if (!list) break
+      list.textContent = ''
+      for (const [i, item] of q.items.entries()) {
+        const card = document.createElement('div')
+        card.className = 'play-ord-item correct'
+        const num = document.createElement('span')
+        num.className = 'play-ord-num'
+        num.textContent = `${i + 1}.`
+        card.appendChild(num)
+        card.appendChild(document.createTextNode(item))
+        list.appendChild(card)
+      }
+      break
+    }
+    case QUESTION_TYPE.numeric:
+      break
+    default: {
+      const _exhaustive: never = q
+      throw new Error(`unreachable: unknown question type ${(_exhaustive as Question).type}`)
+    }
+  }
+}
+
 function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   const cat = data.categories[catIdx]
   if (!cat) return
@@ -321,8 +453,11 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   $('m-cat').textContent = cat.name.toUpperCase()
   $('m-question').textContent = q.q
 
+  const typeContent = $('m-type-content')
+  renderPlayTypeContent(q, typeContent)
+
   const mAnswer = $('m-answer')
-  mAnswer.textContent = 'Answer: ' + q.a
+  mAnswer.textContent = 'Answer: ' + answerDisplayText(q)
   mAnswer.style.display = 'none'
 
   const imgWrap = $('m-image-wrap')
@@ -344,6 +479,12 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
 }
 
 function revealAnswer(): void {
+  if (activeQ) {
+    const cat = data.categories[activeQ.catIdx]
+    const q = cat?.questions[activeQ.qIdx]
+    if (q) revealPlayTypeContent(q, $('m-type-content'))
+  }
+
   $('m-answer').style.display = 'block'
   $('btn-reveal').style.display = 'none'
   $('btn-correct').style.display = 'inline-flex'
@@ -456,6 +597,312 @@ function closeEditModal(): void {
   $('edit-overlay').style.display = 'none'
 }
 
+// ── Answer Fields ──
+
+const TYPE_LABELS: Record<QuestionType, string> = {
+  [QUESTION_TYPE.open]: 'Open Answer',
+  [QUESTION_TYPE.multipleChoice]: 'Multiple Choice',
+  [QUESTION_TYPE.trueFalse]: 'True / False',
+  [QUESTION_TYPE.ordering]: 'Ordering',
+  [QUESTION_TYPE.numeric]: 'Numeric',
+}
+
+function renderAnswerFields(container: HTMLElement, question: Question): void {
+  container.textContent = ''
+
+  switch (question.type) {
+    case QUESTION_TYPE.open: {
+      const label = document.createElement('div')
+      label.className = 'field-label'
+      label.textContent = 'Answer'
+      container.appendChild(label)
+
+      const input = document.createElement('input')
+      input.className = 'edit-input'
+      input.id = 'cell-a'
+      input.value = question.a
+      container.appendChild(input)
+      break
+    }
+    case QUESTION_TYPE.multipleChoice: {
+      const label = document.createElement('div')
+      label.className = 'field-label'
+      label.textContent = 'Options (select the correct one)'
+      container.appendChild(label)
+
+      const list = document.createElement('div')
+      list.id = 'cell-mc-options'
+      list.className = 'mc-options-list'
+
+      for (const [i, opt] of question.options.entries()) {
+        list.appendChild(buildMcOptionRow(i, opt, i === question.correctIndex))
+      }
+      container.appendChild(list)
+
+      const addBtn = document.createElement('button')
+      addBtn.type = 'button'
+      addBtn.className = 'edit-add-btn'
+      addBtn.textContent = '+ Add Option'
+      addBtn.dataset.action = 'mc-add-option'
+      if (question.options.length >= 6) addBtn.style.display = 'none'
+      container.appendChild(addBtn)
+      break
+    }
+    case QUESTION_TYPE.trueFalse: {
+      const label = document.createElement('div')
+      label.className = 'field-label'
+      label.textContent = 'Correct Answer'
+      container.appendChild(label)
+
+      const row = document.createElement('div')
+      row.className = 'tf-radio-row'
+
+      for (const val of [true, false] as const) {
+        const radioLabel = document.createElement('label')
+        radioLabel.className = 'tf-radio-label'
+
+        const radio = document.createElement('input')
+        radio.type = 'radio'
+        radio.name = 'cell-tf'
+        radio.value = String(val)
+        if (question.correctAnswer === val) radio.checked = true
+
+        radioLabel.appendChild(radio)
+        radioLabel.appendChild(document.createTextNode(val ? 'True' : 'False'))
+        row.appendChild(radioLabel)
+      }
+      container.appendChild(row)
+      break
+    }
+    case QUESTION_TYPE.ordering: {
+      const label = document.createElement('div')
+      label.className = 'field-label'
+      label.textContent = 'Items (in correct order — shuffled during play)'
+      container.appendChild(label)
+
+      const list = document.createElement('div')
+      list.id = 'cell-ord-items'
+      list.className = 'ord-items-list'
+
+      for (const [i, item] of question.items.entries()) {
+        list.appendChild(buildOrderingItemRow(i, item, question.items.length))
+      }
+      container.appendChild(list)
+
+      const addBtn = document.createElement('button')
+      addBtn.type = 'button'
+      addBtn.className = 'edit-add-btn'
+      addBtn.textContent = '+ Add Item'
+      addBtn.dataset.action = 'ord-add-item'
+      container.appendChild(addBtn)
+      break
+    }
+    case QUESTION_TYPE.numeric: {
+      const valLabel = document.createElement('div')
+      valLabel.className = 'field-label'
+      valLabel.textContent = 'Correct Value'
+      container.appendChild(valLabel)
+
+      const valInput = document.createElement('input')
+      valInput.type = 'number'
+      valInput.className = 'edit-input'
+      valInput.id = 'cell-numeric-value'
+      valInput.value = String(question.correctValue)
+      container.appendChild(valInput)
+
+      const unitLabel = document.createElement('div')
+      unitLabel.className = 'field-label'
+      unitLabel.textContent = 'Unit (optional)'
+      container.appendChild(unitLabel)
+
+      const unitInput = document.createElement('input')
+      unitInput.className = 'edit-input'
+      unitInput.id = 'cell-numeric-unit'
+      unitInput.value = question.unit ?? ''
+      unitInput.placeholder = 'e.g. km, years, meters'
+      container.appendChild(unitInput)
+      break
+    }
+    default: {
+      const _exhaustive: never = question
+      throw new Error(`unreachable: unknown question type ${(_exhaustive as Question).type}`)
+    }
+  }
+}
+
+function buildMcOptionRow(index: number, value: string, checked: boolean): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'mc-option-row'
+
+  const radio = document.createElement('input')
+  radio.type = 'radio'
+  radio.name = 'cell-mc-correct'
+  radio.value = String(index)
+  if (checked) radio.checked = true
+  row.appendChild(radio)
+
+  const label = document.createElement('span')
+  label.className = 'mc-option-label'
+  label.textContent = String.fromCharCode(65 + index) + '.'
+  row.appendChild(label)
+
+  const input = document.createElement('input')
+  input.className = 'edit-input mc-option-input'
+  input.value = value
+  input.placeholder = `Option ${String.fromCharCode(65 + index)}`
+  row.appendChild(input)
+
+  const removeBtn = document.createElement('button')
+  removeBtn.type = 'button'
+  removeBtn.className = 'ec-remove-btn'
+  removeBtn.textContent = '✕'
+  removeBtn.dataset.action = 'mc-remove-option'
+  row.appendChild(removeBtn)
+
+  return row
+}
+
+function buildOrderingItemRow(index: number, value: string, total: number): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'ord-item-row'
+
+  const num = document.createElement('span')
+  num.className = 'ord-item-num'
+  num.textContent = `${index + 1}.`
+  row.appendChild(num)
+
+  const input = document.createElement('input')
+  input.className = 'edit-input ord-item-input'
+  input.value = value
+  input.placeholder = `Item ${index + 1}`
+  row.appendChild(input)
+
+  const btnGroup = document.createElement('span')
+  btnGroup.className = 'ord-btn-group'
+
+  const upBtn = document.createElement('button')
+  upBtn.type = 'button'
+  upBtn.className = 'ord-move-btn'
+  upBtn.textContent = '▲'
+  upBtn.dataset.action = 'ord-move-up'
+  if (index === 0) upBtn.disabled = true
+  btnGroup.appendChild(upBtn)
+
+  const downBtn = document.createElement('button')
+  downBtn.type = 'button'
+  downBtn.className = 'ord-move-btn'
+  downBtn.textContent = '▼'
+  downBtn.dataset.action = 'ord-move-down'
+  if (index === total - 1) downBtn.disabled = true
+  btnGroup.appendChild(downBtn)
+
+  row.appendChild(btnGroup)
+
+  const removeBtn = document.createElement('button')
+  removeBtn.type = 'button'
+  removeBtn.className = 'ec-remove-btn'
+  removeBtn.textContent = '✕'
+  removeBtn.dataset.action = 'ord-remove-item'
+  row.appendChild(removeBtn)
+
+  return row
+}
+
+function readQuestionFromDOM(currentType: QuestionType): Question {
+  const q = (document.getElementById('cell-q') as HTMLTextAreaElement | null)?.value ?? ''
+
+  switch (currentType) {
+    case QUESTION_TYPE.open: {
+      const a = (document.getElementById('cell-a') as HTMLInputElement | null)?.value ?? ''
+      return { type: QUESTION_TYPE.open, q, a }
+    }
+    case QUESTION_TYPE.multipleChoice: {
+      const rows = document.querySelectorAll('#cell-mc-options .mc-option-row')
+      const options: string[] = []
+      let correctIndex = 0
+      for (const [i, row] of [...rows].entries()) {
+        const input = row.querySelector('.mc-option-input') as HTMLInputElement | null
+        options.push(input?.value ?? '')
+        const radio = row.querySelector('input[type="radio"]') as HTMLInputElement | null
+        if (radio?.checked) correctIndex = i
+      }
+      return { type: QUESTION_TYPE.multipleChoice, q, options, correctIndex }
+    }
+    case QUESTION_TYPE.trueFalse: {
+      const checked = document.querySelector<HTMLInputElement>('input[name="cell-tf"]:checked')
+      return { type: QUESTION_TYPE.trueFalse, q, correctAnswer: checked?.value === 'true' }
+    }
+    case QUESTION_TYPE.ordering: {
+      const rows = document.querySelectorAll('#cell-ord-items .ord-item-row')
+      const items: string[] = []
+      for (const row of rows) {
+        const input = row.querySelector('.ord-item-input') as HTMLInputElement | null
+        items.push(input?.value ?? '')
+      }
+      return { type: QUESTION_TYPE.ordering, q, items }
+    }
+    case QUESTION_TYPE.numeric: {
+      const val = Number((document.getElementById('cell-numeric-value') as HTMLInputElement | null)?.value) || 0
+      const unit = (document.getElementById('cell-numeric-unit') as HTMLInputElement | null)?.value.trim()
+      const result: Question = { type: QUESTION_TYPE.numeric, q, correctValue: val }
+      if (unit) (result as { unit: string }).unit = unit
+      return result
+    }
+    default: {
+      const _exhaustive: never = currentType
+      throw new Error(`unreachable: unknown question type ${_exhaustive}`)
+    }
+  }
+}
+
+function convertQuestion(from: Question, toType: QuestionType): Question {
+  const base = { q: from.q, ...(from.img ? { img: from.img } : {}), ...(from.audio ? { audio: from.audio } : {}) }
+
+  switch (toType) {
+    case QUESTION_TYPE.open:
+      return { ...base, type: QUESTION_TYPE.open, a: '' }
+    case QUESTION_TYPE.multipleChoice:
+      return { ...base, type: QUESTION_TYPE.multipleChoice, options: ['', '', '', ''], correctIndex: 0 }
+    case QUESTION_TYPE.trueFalse:
+      return { ...base, type: QUESTION_TYPE.trueFalse, correctAnswer: true }
+    case QUESTION_TYPE.ordering:
+      return { ...base, type: QUESTION_TYPE.ordering, items: ['', ''] }
+    case QUESTION_TYPE.numeric:
+      return { ...base, type: QUESTION_TYPE.numeric, correctValue: 0 }
+    default: {
+      const _exhaustive: never = toType
+      throw new Error(`unreachable: unknown question type ${_exhaustive}`)
+    }
+  }
+}
+
+function rebuildMcLabels(list: HTMLElement): void {
+  for (const [i, row] of [...list.children].entries()) {
+    const label = row.querySelector('.mc-option-label')
+    if (label) label.textContent = String.fromCharCode(65 + i) + '.'
+    const input = row.querySelector('.mc-option-input') as HTMLInputElement | null
+    if (input) input.placeholder = `Option ${String.fromCharCode(65 + i)}`
+    const radio = row.querySelector('input[type="radio"]') as HTMLInputElement | null
+    if (radio) radio.value = String(i)
+  }
+}
+
+function rebuildOrdControls(list: HTMLElement): void {
+  const rows = [...list.children]
+  for (const [i, row] of rows.entries()) {
+    const num = row.querySelector('.ord-item-num')
+    if (num) num.textContent = `${i + 1}.`
+    const input = row.querySelector('.ord-item-input') as HTMLInputElement | null
+    if (input) input.placeholder = `Item ${i + 1}`
+    const upBtn = row.querySelector('[data-action="ord-move-up"]') as HTMLButtonElement | null
+    if (upBtn) upBtn.disabled = i === 0
+    const downBtn = row.querySelector('[data-action="ord-move-down"]') as HTMLButtonElement | null
+    if (downBtn) downBtn.disabled = i === rows.length - 1
+  }
+}
+
+let editingQuestionType: QuestionType = QUESTION_TYPE.open
+
 // ── Cell Edit ──
 
 function editCell(ci: number, qi: number): void {
@@ -497,6 +944,25 @@ function editCell(ci: number, qi: number): void {
   ptsInput.style.width = '100%'
   content.appendChild(ptsInput)
 
+  editingQuestionType = question.type
+
+  const typeLabel = document.createElement('div')
+  typeLabel.className = 'field-label'
+  typeLabel.textContent = 'Answer Type'
+  content.appendChild(typeLabel)
+
+  const typeSelect = document.createElement('select')
+  typeSelect.className = 'edit-input'
+  typeSelect.id = 'cell-type'
+  for (const [value, label] of Object.entries(TYPE_LABELS)) {
+    const option = document.createElement('option')
+    option.value = value
+    option.textContent = label
+    if (value === question.type) option.selected = true
+    typeSelect.appendChild(option)
+  }
+  content.appendChild(typeSelect)
+
   const qLabel = document.createElement('div')
   qLabel.className = 'field-label'
   qLabel.textContent = 'Question'
@@ -508,16 +974,10 @@ function editCell(ci: number, qi: number): void {
   qTextarea.value = question.q
   content.appendChild(qTextarea)
 
-  const aLabel = document.createElement('div')
-  aLabel.className = 'field-label'
-  aLabel.textContent = 'Answer'
-  content.appendChild(aLabel)
-
-  const aInput = document.createElement('input')
-  aInput.className = 'edit-input'
-  aInput.id = 'cell-a'
-  aInput.value = question.a
-  content.appendChild(aInput)
+  const answerContainer = document.createElement('div')
+  answerContainer.id = 'cell-answer-fields'
+  renderAnswerFields(answerContainer, question)
+  content.appendChild(answerContainer)
 
   const imgLabel = document.createElement('div')
   imgLabel.className = 'field-label'
@@ -600,27 +1060,26 @@ function editCell(ci: number, qi: number): void {
 function saveCellEdit(ci: number, qi: number): void {
   const cat = data.categories[ci]
   if (!cat) return
-  const question = cat.questions[qi]
-  if (!question) return
 
   const ptsEl = document.getElementById('cell-pts') as HTMLInputElement | null
-  const qEl = document.getElementById('cell-q') as HTMLTextAreaElement | null
-  const aEl = document.getElementById('cell-a') as HTMLInputElement | null
-
   if (ptsEl) cat.points[qi] = Number(ptsEl.value) || 100
-  if (qEl) question.q = qEl.value
-  if (aEl) question.a = aEl.value
+
+  const newQ = readQuestionFromDOM(editingQuestionType)
 
   const imgKey = `${ci}-${qi}`
   const imgValue = imgStaging[imgKey]
   if (imgValue !== undefined) {
     if (imgValue) {
-      question.img = imgValue
+      newQ.img = imgValue
     } else {
-      delete question.img
+      delete newQ.img
     }
+  } else {
+    const oldQ = cat.questions[qi]
+    if (oldQ?.img) newQ.img = oldQ.img
   }
 
+  cat.questions[qi] = newQ
   clearRecord(imgStaging)
   saveData()
   renderAll()
@@ -670,14 +1129,14 @@ function saveAdmin(): void {
     for (const [qi] of cat.questions.entries()) {
       const qEl = document.getElementById(`adm-q-${ci}-${qi}`) as HTMLTextAreaElement | null
       const aEl = document.getElementById(`adm-a-${ci}-${qi}`) as HTMLInputElement | null
-      if (!qEl || !aEl) continue
+      if (!qEl) continue
 
       const existing = cat.questions[qi]
       if (existing) {
         existing.q = qEl.value
-        existing.a = aEl.value
-      } else {
-        cat.questions[qi] = { q: qEl.value, a: aEl.value }
+        if (existing.type === QUESTION_TYPE.open && aEl) {
+          existing.a = aEl.value
+        }
       }
 
       const question = cat.questions[qi]
@@ -724,7 +1183,7 @@ function addCategory(): void {
     name: `Category ${data.categories.length + 1}`,
     color: nextColor(),
     points: [100, 200, 300, 400, 500],
-    questions: Array.from({ length: 5 }, () => ({ q: 'Write your question', a: 'Write your answer' })),
+    questions: Array.from({ length: 5 }, () => defaultQuestion()),
   })
   saveData()
   renderAll()
@@ -979,6 +1438,61 @@ function setupEvents(): void {
           target.style.display = 'none'
           break
         }
+        case 'mc-add-option': {
+          const list = document.getElementById('cell-mc-options')
+          if (!list) break
+          const count = list.children.length
+          if (count >= 6) break
+          list.appendChild(buildMcOptionRow(count, '', false))
+          if (count + 1 >= 6) target.style.display = 'none'
+          break
+        }
+        case 'mc-remove-option': {
+          const list = document.getElementById('cell-mc-options')
+          if (!list || list.children.length <= 2) break
+          const row = target.closest('.mc-option-row')
+          const wasChecked = row?.querySelector<HTMLInputElement>('input[type="radio"]')?.checked
+          row?.remove()
+          if (wasChecked) {
+            const first = list.querySelector<HTMLInputElement>('input[type="radio"]')
+            if (first) first.checked = true
+          }
+          rebuildMcLabels(list)
+          const addBtn = document.querySelector<HTMLElement>('[data-action="mc-add-option"]')
+          if (addBtn) addBtn.style.display = ''
+          break
+        }
+        case 'ord-add-item': {
+          const list = document.getElementById('cell-ord-items')
+          if (!list) break
+          const count = list.children.length
+          list.appendChild(buildOrderingItemRow(count, '', count + 1))
+          rebuildOrdControls(list)
+          break
+        }
+        case 'ord-remove-item': {
+          const list = document.getElementById('cell-ord-items')
+          if (!list || list.children.length <= 2) break
+          target.closest('.ord-item-row')?.remove()
+          rebuildOrdControls(list)
+          break
+        }
+        case 'ord-move-up': {
+          const list = document.getElementById('cell-ord-items')
+          const row = target.closest('.ord-item-row')
+          if (!list || !row || !row.previousElementSibling) break
+          list.insertBefore(row, row.previousElementSibling)
+          rebuildOrdControls(list)
+          break
+        }
+        case 'ord-move-down': {
+          const list = document.getElementById('cell-ord-items')
+          const row = target.closest('.ord-item-row')
+          if (!list || !row || !row.nextElementSibling) break
+          list.insertBefore(row.nextElementSibling, row)
+          rebuildOrdControls(list)
+          break
+        }
         default:
           break
       }
@@ -989,12 +1503,25 @@ function setupEvents(): void {
   $('edit-modal').addEventListener(
     'change',
     (e) => {
-      const target = e.target as HTMLInputElement
-      if (target.id !== 'cell-img-file') return
-      const ci = Number(target.dataset.ci)
-      const qi = Number(target.dataset.qi)
-      const file = target.files?.[0]
-      if (file) handleImgUpload(ci, qi, file, 'cell-img-preview', 'cell-img-clear')
+      const target = e.target as HTMLElement
+
+      if (target instanceof HTMLSelectElement && target.id === 'cell-type') {
+        const newType = target.value as QuestionType
+        if (newType === editingQuestionType) return
+        const partial = readQuestionFromDOM(editingQuestionType)
+        const converted = convertQuestion(partial, newType)
+        editingQuestionType = newType
+        const container = document.getElementById('cell-answer-fields')
+        if (container) renderAnswerFields(container, converted)
+        return
+      }
+
+      if (target instanceof HTMLInputElement && target.id === 'cell-img-file') {
+        const ci = Number(target.dataset.ci)
+        const qi = Number(target.dataset.qi)
+        const file = target.files?.[0]
+        if (file) handleImgUpload(ci, qi, file, 'cell-img-preview', 'cell-img-clear')
+      }
     },
     { signal },
   )
@@ -1192,7 +1719,7 @@ function setupEvents(): void {
           if (!cat) return
           const lastPts = cat.points[cat.points.length - 1] ?? 0
           cat.points.push(lastPts + 100)
-          cat.questions.push({ q: 'Write your question', a: 'Write your answer' })
+          cat.questions.push(defaultQuestion())
           saveData()
           renderAll()
           return

@@ -17,10 +17,78 @@ export type CategoryColor = (typeof CATEGORY_COLOR)[keyof typeof CATEGORY_COLOR]
 export const APP_MODE = { edit: 'edit', play: 'play' } as const
 export type AppMode = (typeof APP_MODE)[keyof typeof APP_MODE]
 
-export type Question = {
+export const QUESTION_TYPE = {
+  open: 'open',
+  multipleChoice: 'multiple-choice',
+  trueFalse: 'true-false',
+  ordering: 'ordering',
+  numeric: 'numeric',
+} as const
+export type QuestionType = (typeof QUESTION_TYPE)[keyof typeof QUESTION_TYPE]
+
+type QuestionBase = {
   q: string
-  a: string
   img?: string
+  audio?: string
+}
+
+export type OpenQuestion = QuestionBase & {
+  type: typeof QUESTION_TYPE.open
+  a: string
+}
+
+export type MultipleChoiceQuestion = QuestionBase & {
+  type: typeof QUESTION_TYPE.multipleChoice
+  options: string[]
+  correctIndex: number
+}
+
+export type TrueFalseQuestion = QuestionBase & {
+  type: typeof QUESTION_TYPE.trueFalse
+  correctAnswer: boolean
+}
+
+export type OrderingQuestion = QuestionBase & {
+  type: typeof QUESTION_TYPE.ordering
+  items: string[]
+}
+
+export type NumericQuestion = QuestionBase & {
+  type: typeof QUESTION_TYPE.numeric
+  correctValue: number
+  unit?: string
+}
+
+export type Question =
+  | OpenQuestion
+  | MultipleChoiceQuestion
+  | TrueFalseQuestion
+  | OrderingQuestion
+  | NumericQuestion
+
+export function defaultQuestion(): OpenQuestion {
+  return { type: QUESTION_TYPE.open, q: 'Write your question', a: 'Write your answer' }
+}
+
+export function answerDisplayText(q: Question): string {
+  switch (q.type) {
+    case QUESTION_TYPE.open:
+      return q.a
+    case QUESTION_TYPE.multipleChoice: {
+      const opt = q.options[q.correctIndex]
+      return opt ?? ''
+    }
+    case QUESTION_TYPE.trueFalse:
+      return q.correctAnswer ? 'True' : 'False'
+    case QUESTION_TYPE.ordering:
+      return q.items.join(' → ')
+    case QUESTION_TYPE.numeric:
+      return q.unit ? `${q.correctValue} ${q.unit}` : String(q.correctValue)
+    default: {
+      const _exhaustive: never = q
+      throw new Error(`unreachable: unknown question type ${(_exhaustive as Question).type}`)
+    }
+  }
 }
 
 export type Category = {
@@ -46,7 +114,7 @@ export type AppData = {
 // ── Database ──
 
 const DB_NAME = 'quizboard'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE_NAME = 'app'
 const DOC_KEY = 'current'
 
@@ -66,6 +134,47 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 const VALID_COLORS = new Set<string>(Object.values(CATEGORY_COLOR))
 const VALID_MODES = new Set<string>(Object.values(APP_MODE))
+const VALID_QUESTION_TYPES = new Set<string>(Object.values(QUESTION_TYPE))
+
+function isValidQuestion(q: unknown): boolean {
+  if (!isRecord(q)) return false
+  if (typeof q.q !== 'string') return false
+
+  switch (q.type) {
+    case QUESTION_TYPE.open:
+      return typeof q.a === 'string'
+    case QUESTION_TYPE.multipleChoice:
+      return Array.isArray(q.options)
+        && q.options.length >= 2
+        && q.options.every((o: unknown) => typeof o === 'string')
+        && typeof q.correctIndex === 'number'
+        && q.correctIndex >= 0
+        && q.correctIndex < q.options.length
+    case QUESTION_TYPE.trueFalse:
+      return typeof q.correctAnswer === 'boolean'
+    case QUESTION_TYPE.ordering:
+      return Array.isArray(q.items)
+        && q.items.length >= 2
+        && q.items.every((i: unknown) => typeof i === 'string')
+    case QUESTION_TYPE.numeric:
+      return typeof q.correctValue === 'number'
+    default:
+      return false
+  }
+}
+
+function normalizeAppData(value: unknown): void {
+  if (!isRecord(value) || !Array.isArray(value.categories)) return
+  for (const cat of value.categories) {
+    if (!isRecord(cat) || !Array.isArray(cat.questions)) continue
+    for (const q of cat.questions) {
+      if (!isRecord(q)) continue
+      if (!('type' in q) || !VALID_QUESTION_TYPES.has(q.type as string)) {
+        q.type = QUESTION_TYPE.open
+      }
+    }
+  }
+}
 
 function isAppData(value: unknown): value is AppData {
   if (!isRecord(value)) return false
@@ -79,8 +188,7 @@ function isAppData(value: unknown): value is AppData {
     if (typeof cat.color !== 'string' || !VALID_COLORS.has(cat.color)) return false
     if (!Array.isArray(cat.points) || !Array.isArray(cat.questions)) return false
     for (const q of cat.questions) {
-      if (!isRecord(q)) return false
-      if (typeof q.q !== 'string' || typeof q.a !== 'string') return false
+      if (!isValidQuestion(q)) return false
     }
   }
 
@@ -99,6 +207,7 @@ export async function loadAppData(): Promise<AppData | undefined> {
     const db = await dbPromise
     const raw: unknown = await db.get(STORE_NAME, DOC_KEY)
     if (!raw) return undefined
+    normalizeAppData(raw)
     if (!isAppData(raw)) return undefined
     return raw
   } catch {
