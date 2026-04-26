@@ -1,6 +1,6 @@
 import './style.css'
 import { APP_MODE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, DEFAULT_QUESTION_TEXT, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
-import type { AppData, CategoryColor, Question, QuestionType, QuestionMedia } from './persistence/db.ts'
+import type { AppData, CategoryColor, Question, QuestionType, QuestionMedia, Team } from './persistence/db.ts'
 
 type ActiveQ = {
   catIdx: number
@@ -25,10 +25,10 @@ const data: AppData = {
   categories: [],
   teams: [],
   used: {},
+  currentTurnIndex: 0,
 }
 
 let activeQ: ActiveQ | null = null
-let selectedTeamIdx = 0
 const mediaStaging: Record<string, QuestionMedia | null> = {}
 
 // ── Persistence ──
@@ -40,6 +40,7 @@ async function loadData(): Promise<void> {
     data.categories = saved.categories
     data.teams = saved.teams
     data.used = saved.used
+    data.currentTurnIndex = saved.currentTurnIndex
   } else {
     await saveAppData(data)
   }
@@ -242,7 +243,8 @@ function renderSubtitle(): void {
     el.appendChild(badge)
     el.appendChild(document.createTextNode(' Click a title to rename • Click a tile to edit'))
   } else {
-    el.textContent = 'Click a tile to play'
+    const team = data.teams[data.currentTurnIndex]
+    el.textContent = team ? `${team.name}'s turn — pick a tile` : 'Click a tile to play'
   }
 }
 
@@ -300,13 +302,32 @@ function renderScoreboard(): void {
   for (const [i, t] of data.teams.entries()) {
     const card = cloneTemplate('tmpl-team-card')
     card.dataset.team = String(i)
-    if (i === selectedTeamIdx) card.classList.add('active')
+    const isActive = i === data.currentTurnIndex
+    if (isActive) card.classList.add('active')
 
     const nameInput = card.querySelector('.team-name') as HTMLInputElement
     nameInput.value = t.name
 
     const score = card.querySelector('.team-score') as HTMLElement
     score.textContent = t.score.toLocaleString()
+
+    if (isActive) {
+      const turnBadge = document.createElement('div')
+      turnBadge.className = 'team-turn-badge'
+      turnBadge.textContent = 'YOUR TURN'
+      card.appendChild(turnBadge)
+    }
+
+    if (t.streak > 0) {
+      const streakBadge = document.createElement('span')
+      streakBadge.className = 'team-streak'
+      const capped = Math.min(t.streak, 7)
+      streakBadge.style.setProperty('--streak', String(capped))
+      const bonus = 100 * (t.streak - 1)
+      streakBadge.textContent = bonus > 0 ? ` ${t.streak} (+${bonus})` : ` ${t.streak}`
+      const nameWrap = card.querySelector('.team-name-wrap')
+      if (nameWrap) nameWrap.appendChild(streakBadge)
+    }
 
     for (const btn of card.querySelectorAll<HTMLButtonElement>('[data-action="adjust-score"]')) {
       btn.dataset.team = String(i)
@@ -434,25 +455,29 @@ function renderBoard(): void {
   el.appendChild(frag)
 }
 
-function renderTeamSelector(): void {
+function renderCurrentTeamLabel(): void {
   const el = $('m-teams')
-  const frag = document.createDocumentFragment()
-
-  const label = document.createElement('span')
-  label.style.cssText = 'font-size:12px;color:var(--text-muted);margin-right:8px;align-self:center'
-  label.textContent = 'Awarding:'
-  frag.appendChild(label)
-
-  for (const [i, t] of data.teams.entries()) {
-    const chip = cloneTemplate('tmpl-ts-chip') as HTMLButtonElement
-    chip.textContent = t.name
-    chip.dataset.team = String(i)
-    if (i === selectedTeamIdx) chip.classList.add('selected')
-    frag.appendChild(chip)
-  }
-
   el.textContent = ''
-  el.appendChild(frag)
+  const team = data.teams[data.currentTurnIndex]
+  if (!team) return
+
+  const label = document.createElement('div')
+  label.className = 'current-team-label'
+  label.textContent = `${team.name}'s answer`
+
+  const pts = activeQ?.pts ?? 0
+  const nextBonus = 100 * team.streak
+  const nextTotal = pts + nextBonus
+  const info = document.createElement('span')
+  info.className = 'current-team-streak-info'
+  if (team.streak > 0) {
+    info.textContent = ` — streak ${team.streak} (+${100 * (team.streak - 1)}), next: +${nextTotal}`
+  } else {
+    info.textContent = ` — next: +${nextTotal}`
+  }
+  label.appendChild(info)
+
+  el.appendChild(label)
 }
 
 // ── Question Modal ──
@@ -644,7 +669,7 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   $('btn-correct').style.display = 'none'
   $('btn-wrong').style.display = 'none'
 
-  renderTeamSelector()
+  renderCurrentTeamLabel()
   $('q-overlay').style.display = 'flex'
 }
 
@@ -663,10 +688,23 @@ function revealAnswer(): void {
 
 function markResult(correct: boolean): void {
   if (!activeQ) return
-  const delta = correct ? activeQ.pts : -activeQ.pts
-  adjustScore(selectedTeamIdx, delta)
+  const team = data.teams[data.currentTurnIndex]
+  if (!team) return
+
+  if (correct) {
+    team.streak += 1
+    const streakBonus = 100 * (team.streak - 1)
+    team.score += activeQ.pts + streakBonus
+  } else {
+    team.streak = 0
+    data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+  }
+
+  saveData()
   markUsed()
   closeQModal()
+  renderScoreboard()
+  renderSubtitle()
 }
 
 function skipQuestion(): void {
@@ -1536,6 +1574,12 @@ function removeCategory(ci: number): void {
 function buildTeamSetupRow(index: number): HTMLElement {
   const row = document.createElement('div')
   row.className = 'ts-team-row'
+  row.draggable = true
+
+  const handle = document.createElement('span')
+  handle.className = 'ts-drag-handle'
+  handle.textContent = '⠿'
+  row.appendChild(handle)
 
   const input = document.createElement('input')
   input.type = 'text'
@@ -1572,6 +1616,40 @@ function openTeamSetup(): void {
     teamsWrap.appendChild(buildTeamSetupRow(i))
   }
 
+  const hint = document.createElement('div')
+  hint.className = 'ts-order-hint'
+  hint.textContent = 'Drag to set turn order'
+  content.appendChild(hint)
+
+  let dragRow: HTMLElement | null = null
+
+  teamsWrap.addEventListener('dragstart', (e) => {
+    const row = (e.target as HTMLElement).closest('.ts-team-row') as HTMLElement | null
+    if (!row) return
+    dragRow = row
+    row.classList.add('dragging')
+    e.dataTransfer?.setData('text/plain', '')
+  })
+
+  teamsWrap.addEventListener('dragover', (e) => {
+    e.preventDefault()
+    if (!dragRow) return
+    const target = (e.target as HTMLElement).closest('.ts-team-row') as HTMLElement | null
+    if (!target || target === dragRow) return
+    const rect = target.getBoundingClientRect()
+    const mid = rect.top + rect.height / 2
+    if (e.clientY < mid) {
+      teamsWrap.insertBefore(dragRow, target)
+    } else {
+      teamsWrap.insertBefore(dragRow, target.nextSibling)
+    }
+  })
+
+  teamsWrap.addEventListener('dragend', () => {
+    if (dragRow) dragRow.classList.remove('dragging')
+    dragRow = null
+  })
+
   const addBtn = document.createElement('button')
   addBtn.type = 'button'
   addBtn.className = 'edit-add-btn'
@@ -1592,17 +1670,17 @@ function openTeamSetup(): void {
 
 function startGame(): void {
   const rows = document.querySelectorAll('#ts-teams .ts-team-row')
-  const teams: Array<{ name: string; score: number }> = []
+  const teams: Team[] = []
   for (const row of rows) {
     const input = row.querySelector('.ts-team-name') as HTMLInputElement | null
     const name = input?.value.trim() || `Team ${teams.length + 1}`
-    teams.push({ name, score: 0 })
+    teams.push({ name, score: 0, streak: 0 })
   }
   if (teams.length < 2) return
 
   data.teams = teams
   data.used = {}
-  selectedTeamIdx = 0
+  data.currentTurnIndex = 0
   $('team-setup-overlay').style.display = 'none'
   switchMode(APP_MODE.play)
 }
@@ -1611,6 +1689,7 @@ function cancelGame(): void {
   if (!confirm('Cancel the game? All scores will be lost.')) return
   data.teams = []
   data.used = {}
+  data.currentTurnIndex = 0
   switchMode(APP_MODE.edit)
 }
 
@@ -2066,12 +2145,6 @@ function setupEvents(): void {
       }
 
       if (target.closest('.team-name')) return
-
-      const card = target.closest<HTMLElement>('[data-action="select-team"]')
-      if (card) {
-        selectedTeamIdx = Number(card.dataset.team)
-        renderScoreboard()
-      }
     },
     { signal },
   )
@@ -2081,7 +2154,7 @@ function setupEvents(): void {
     (e) => {
       const target = e.target as HTMLElement
       if (!target.matches('.team-name')) return
-      const card = target.closest<HTMLElement>('[data-action="select-team"]')
+      const card = target.closest<HTMLElement>('.team-card')
       if (!card) return
       const idx = Number(card.dataset.team)
       const team = data.teams[idx]
@@ -2164,17 +2237,6 @@ function setupEvents(): void {
     { signal },
   )
 
-  // Team selector delegation (in question modal)
-  $('m-teams').addEventListener(
-    'click',
-    (e) => {
-      const chip = (e.target as HTMLElement).closest<HTMLElement>('[data-action="select-awarding"]')
-      if (!chip) return
-      selectedTeamIdx = Number(chip.dataset.team)
-      renderTeamSelector()
-    },
-    { signal },
-  )
 }
 
 // ── Init ──

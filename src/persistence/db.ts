@@ -112,6 +112,7 @@ export type Category = {
 export type Team = {
   name: string
   score: number
+  streak: number
 }
 
 export type AppData = {
@@ -119,6 +120,7 @@ export type AppData = {
   categories: Category[]
   teams: Team[]
   used: Record<string, boolean>
+  currentTurnIndex: number
 }
 
 // ── Database ──
@@ -190,7 +192,17 @@ function isValidQuestion(q: unknown): boolean {
 }
 
 function normalizeAppData(value: unknown): void {
-  if (!isRecord(value) || !Array.isArray(value.categories)) return
+  if (!isRecord(value)) return
+
+  if (typeof value.currentTurnIndex !== 'number') value.currentTurnIndex = 0
+
+  if (Array.isArray(value.teams)) {
+    for (const team of value.teams) {
+      if (isRecord(team) && typeof team.streak !== 'number') team.streak = 0
+    }
+  }
+
+  if (!Array.isArray(value.categories)) return
   for (const cat of value.categories) {
     if (!isRecord(cat) || !Array.isArray(cat.questions)) continue
     for (const q of cat.questions) {
@@ -210,7 +222,7 @@ function normalizeAppData(value: unknown): void {
 function isAppData(value: unknown): value is AppData {
   if (!isRecord(value)) return false
   if (typeof value.mode !== 'string' || !VALID_MODES.has(value.mode)) return false
-  if (!Array.isArray(value.categories) || !Array.isArray(value.teams) || !isRecord(value.used)) return false
+  if (!Array.isArray(value.categories) || !Array.isArray(value.teams) || !isRecord(value.used) || typeof value.currentTurnIndex !== 'number') return false
 
   for (const cat of value.categories) {
     if (!isRecord(cat)) return false
@@ -225,7 +237,7 @@ function isAppData(value: unknown): value is AppData {
 
   for (const team of value.teams) {
     if (!isRecord(team)) return false
-    if (typeof team.name !== 'string' || typeof team.score !== 'number') return false
+    if (typeof team.name !== 'string' || typeof team.score !== 'number' || typeof team.streak !== 'number') return false
   }
 
   return true
