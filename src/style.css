@@ -23,21 +23,24 @@ body {
   font-family: 'Barlow', sans-serif;
   background: var(--blue-dark);
   color: var(--text-main);
-  min-height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 24px 16px 40px;
+  padding: 12px 12px 12px;
+  gap: 6px;
   background-image: radial-gradient(ellipse at 50% 0%, #122060 0%, #0a1628 65%);
 }
 
 h1 {
   font-family: 'Bebas Neue', sans-serif;
-  font-size: clamp(2.4rem, 5vw, 4rem);
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
   letter-spacing: 0.12em;
   color: var(--gold);
   text-shadow: 0 2px 20px rgba(245,197,24,0.35);
-  margin-bottom: 6px;
+  margin: 0;
+  line-height: 1;
 }
 
 .subtitle {
@@ -45,7 +48,7 @@ h1 {
   color: var(--text-muted);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  margin-bottom: 24px;
+  margin: 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -120,12 +123,10 @@ h1 {
 /* ── SCOREBOARD ── */
 .scoreboard {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
-  margin-bottom: 28px;
   width: 100%;
-  max-width: 1280px;
 }
 
 .team-card {
@@ -198,17 +199,17 @@ h1 {
 /* ── BOARD ── */
 .board {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  max-width: 1280px;
-  align-items: flex-start;
+  flex: 1;
+  min-height: 0;
 }
 
 .board-column {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -249,12 +250,13 @@ h1 {
 .cat-header {
   background: var(--cat-tile, var(--blue-tile));
   border-radius: var(--radius);
-  padding: 14px 8px;
+  padding: 8px 6px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   border: 1.5px solid var(--cat-border, #2247c4);
+  position: relative;
 }
 
 .cat-name {
@@ -285,10 +287,11 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 18px 8px;
+  padding: 8px 4px;
   cursor: pointer;
   transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
-  min-height: 72px;
+  flex: 1;
+  position: relative;
 }
 
 .tile:hover:not(.used) {
@@ -301,7 +304,7 @@ h1 {
 
 .tile-pts {
   font-family: 'Bebas Neue', sans-serif;
-  font-size: clamp(1.4rem, 3vw, 2rem);
+  font-size: clamp(1rem, 2vw, 1.5rem);
   color: var(--gold);
   text-shadow: 0 1px 6px rgba(245,197,24,0.3);
   letter-spacing: 0.05em;
@@ -323,20 +326,56 @@ h1 {
   outline-offset: 2px;
 }
 
-.remove-cat-btn {
+.cat-remove-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--red);
+  color: white;
+  font-size: 10px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  border: 2px solid var(--blue-dark);
+  z-index: 1;
+}
+.cat-header:hover .cat-remove-badge { opacity: 1; }
+
+.tile-remove {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  line-height: 1;
+  z-index: 1;
+}
+.tile:hover .tile-remove { opacity: 0.6; }
+.tile-remove:hover { opacity: 1 !important; color: var(--red); }
+
+.add-question-btn {
   background: transparent;
-  border: 1px dashed rgba(239,68,68,0.3);
+  border: 1px dashed var(--cat-border, #2247c4);
   border-radius: 6px;
-  color: var(--red);
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
-  padding: 6px;
+  padding: 4px;
   cursor: pointer;
-  opacity: 0.5;
+  opacity: 0.4;
   transition: opacity 0.15s, background 0.15s;
 }
-
-.remove-cat-btn:hover { opacity: 1; background: rgba(239,68,68,0.08); }
+.add-question-btn:hover { opacity: 1; background: rgba(255,255,255,0.04); }
 
 /* ── CONTROLS ── */
 .controls {
@@ -344,8 +383,7 @@ h1 {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: center;
-  margin-top: 24px;
-  max-width: 1280px;
+  margin-top: 8px;
   width: 100%;
 }
 
@@ -916,8 +954,7 @@ h1 {
 @media (max-width: 600px) {
   .board { flex-wrap: wrap; }
   .board-column { min-width: 100px; }
-  .tile { min-height: 56px; padding: 12px 4px; }
-  .tile-pts { font-size: 1.2rem; }
+  .tile-pts { font-size: 1rem; }
   .cat-name { font-size: 0.85rem; }
   .modal { padding: 24px 20px; }
   .modal-pts { font-size: 2.5rem; }

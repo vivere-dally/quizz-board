@@ -230,6 +230,14 @@ function renderBoard(): void {
       editIcon.className = 'cat-edit-icon'
       editIcon.textContent = '✎'
       header.appendChild(editIcon)
+
+      const removeBadge = document.createElement('button')
+      removeBadge.type = 'button'
+      removeBadge.className = 'cat-remove-badge'
+      removeBadge.textContent = '✕'
+      removeBadge.dataset.action = 'remove-category'
+      removeBadge.dataset.ci = String(ci)
+      header.appendChild(removeBadge)
     }
 
     col.appendChild(header)
@@ -243,7 +251,17 @@ function renderBoard(): void {
       const ptsSpan = tileBtn.querySelector('.tile-pts') as HTMLElement
       ptsSpan.textContent = String(pts)
 
-      if (!isEdit) {
+      if (isEdit) {
+        if (cat.questions.length > 1) {
+          const tileRemove = document.createElement('span')
+          tileRemove.className = 'tile-remove'
+          tileRemove.textContent = '✕'
+          tileRemove.dataset.action = 'remove-question'
+          tileRemove.dataset.ci = String(ci)
+          tileRemove.dataset.qi = String(qi)
+          tileBtn.appendChild(tileRemove)
+        }
+      } else {
         const used = !!data.used[`${cat.id}-${qi}`]
         if (used) {
           tileBtn.classList.add('used')
@@ -255,13 +273,13 @@ function renderBoard(): void {
     }
 
     if (isEdit) {
-      const removeBtn = document.createElement('button')
-      removeBtn.type = 'button'
-      removeBtn.className = 'remove-cat-btn'
-      removeBtn.textContent = '✕ Remove'
-      removeBtn.dataset.action = 'remove-category'
-      removeBtn.dataset.ci = String(ci)
-      col.appendChild(removeBtn)
+      const addQBtn = document.createElement('button')
+      addQBtn.type = 'button'
+      addQBtn.className = 'add-question-btn'
+      addQBtn.textContent = '+'
+      addQBtn.dataset.action = 'add-question'
+      addQBtn.dataset.ci = String(ci)
+      col.appendChild(addQBtn)
     }
 
     frag.appendChild(col)
@@ -1303,14 +1321,40 @@ function setupEvents(): void {
           if (nameBtn) editCategory(Number(nameBtn.dataset.ci))
           return
         }
-        const tile = target.closest<HTMLButtonElement>('[data-action="open-question"]')
-        if (tile) {
-          editCell(Number(tile.dataset.ci), Number(tile.dataset.qi))
+        const removeQ = target.closest<HTMLElement>('[data-action="remove-question"]')
+        if (removeQ) {
+          const ci = Number(removeQ.dataset.ci)
+          const qi = Number(removeQ.dataset.qi)
+          const cat = data.categories[ci]
+          if (cat && cat.questions.length > 1) {
+            if (!confirm(`Remove this ${cat.points[qi] ?? 0} pts question?`)) return
+            cat.questions.splice(qi, 1)
+            cat.points.splice(qi, 1)
+            saveData()
+            renderAll()
+          }
           return
         }
         const removeBtn = target.closest<HTMLElement>('[data-action="remove-category"]')
         if (removeBtn) {
           removeCategory(Number(removeBtn.dataset.ci))
+          return
+        }
+        const tile = target.closest<HTMLButtonElement>('[data-action="open-question"]')
+        if (tile) {
+          editCell(Number(tile.dataset.ci), Number(tile.dataset.qi))
+          return
+        }
+        const addQ = target.closest<HTMLElement>('[data-action="add-question"]')
+        if (addQ) {
+          const ci = Number(addQ.dataset.ci)
+          const cat = data.categories[ci]
+          if (!cat) return
+          const lastPts = cat.points[cat.points.length - 1] ?? 0
+          cat.points.push(lastPts + 100)
+          cat.questions.push({ q: 'Write your question', a: 'Write your answer' })
+          saveData()
+          renderAll()
           return
         }
       } else {
