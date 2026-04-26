@@ -8,34 +8,21 @@
   </head>
   <body>
     <h1>QUIZ BOARD</h1>
-    <p class="subtitle">
-      Click a category name to edit &bull; Click a tile to play
-    </p>
+    <p class="subtitle">Click a category name to edit &bull; Click a tile to play</p>
 
     <div class="scoreboard" id="scoreboard"></div>
     <div class="board" id="board"></div>
 
-    <div class="controls">
-      <button class="ctrl-btn" onclick="openAdmin()">
-        &#9881; Edit All Questions
-      </button>
-      <button class="ctrl-btn" onclick="showWinner()">
-        &#127942; Show Winner
-      </button>
-      <button class="ctrl-btn danger" onclick="resetBoard()">
-        &#8635; Reset Board
-      </button>
+    <div class="controls" id="controls">
+      <button class="ctrl-btn" type="button" data-action="edit-all">&#9881; Edit All Questions</button>
+      <button class="ctrl-btn" type="button" data-action="show-winner">&#127942; Show Winner</button>
+      <button class="ctrl-btn danger" type="button" data-action="reset-board">&#8635; Reset Board</button>
     </div>
 
     <!-- Question Modal -->
-    <div
-      class="overlay"
-      id="q-overlay"
-      style="display: none"
-      onclick="closeIfOutside(event)"
-    >
+    <div class="overlay" id="q-overlay" style="display: none">
       <div class="modal" id="q-modal">
-        <button class="modal-close" onclick="closeQModal()">&#10005;</button>
+        <button class="modal-close" type="button" id="btn-close-question">&#10005;</button>
         <div class="modal-pts" id="m-pts"></div>
         <div class="modal-cat" id="m-cat"></div>
         <div class="q-image-wrap" id="m-image-wrap" style="display: none">
@@ -45,88 +32,72 @@
         <div class="a-display" id="m-answer"></div>
         <div class="team-selector" id="m-teams"></div>
         <div class="modal-btn-row">
-          <button
-            class="modal-btn btn-reveal"
-            id="btn-reveal"
-            onclick="revealAnswer()"
-          >
-            Reveal Answer
-          </button>
-          <button
-            class="modal-btn btn-correct"
-            id="btn-correct"
-            onclick="markResult(true)"
-            style="display: none"
-          >
-            &#10003; Correct
-          </button>
-          <button
-            class="modal-btn btn-wrong"
-            id="btn-wrong"
-            onclick="markResult(false)"
-            style="display: none"
-          >
-            &#10007; Wrong
-          </button>
-          <button class="modal-btn btn-skip" onclick="skipQuestion()">
-            Skip
-          </button>
+          <button class="modal-btn btn-reveal" type="button" id="btn-reveal">Reveal Answer</button>
+          <button class="modal-btn btn-correct" type="button" id="btn-correct" style="display: none">&#10003; Correct</button>
+          <button class="modal-btn btn-wrong" type="button" id="btn-wrong" style="display: none">&#10007; Wrong</button>
+          <button class="modal-btn btn-skip" type="button" id="btn-skip">Skip</button>
         </div>
       </div>
     </div>
 
     <!-- Edit Modal -->
-    <div
-      class="overlay"
-      id="edit-overlay"
-      style="display: none"
-      onclick="closeIfOutside(event)"
-    >
+    <div class="overlay" id="edit-overlay" style="display: none">
       <div class="modal edit-modal" id="edit-modal">
-        <button class="modal-close" onclick="closeEditModal()">&#10005;</button>
+        <button class="modal-close" type="button" id="btn-close-edit">&#10005;</button>
         <div id="edit-content"></div>
       </div>
     </div>
 
     <!-- Admin Modal -->
-    <div
-      class="overlay"
-      id="admin-overlay"
-      style="display: none"
-      onclick="closeIfOutside(event)"
-    >
+    <div class="overlay" id="admin-overlay" style="display: none">
       <div class="modal admin-modal" id="admin-modal">
-        <button class="modal-close" onclick="closeAdmin()">&#10005;</button>
+        <button class="modal-close" type="button" id="btn-close-admin">&#10005;</button>
         <div id="admin-content"></div>
-        <button class="edit-save" onclick="saveAdmin()">
-          Save All Changes
-        </button>
+        <button class="edit-save" type="button" id="btn-save-admin">Save All Changes</button>
       </div>
     </div>
 
     <!-- Winner Modal -->
-    <div
-      class="overlay"
-      id="winner-overlay"
-      style="display: none"
-      onclick="closeIfOutside(event)"
-    >
+    <div class="overlay" id="winner-overlay" style="display: none">
       <div class="modal winner-modal" id="winner-modal">
-        <button
-          class="modal-close"
-          onclick="
-            document.getElementById('winner-overlay').style.display = 'none'
-          "
-        >
-          &#10005;
-        </button>
+        <button class="modal-close" type="button" id="btn-close-winner">&#10005;</button>
         <div class="winner-trophy">&#127942;</div>
         <div id="winner-content"></div>
       </div>
     </div>
 
-    <!-- Audio Player -->
     <audio id="music-audio" style="display: none"></audio>
+
+    <!-- Templates -->
+    <template id="tmpl-team-card">
+      <div class="team-card" data-action="select-team">
+        <div class="team-name-wrap">
+          <span class="team-label">Player / Team</span>
+          <input class="team-name" type="text" />
+        </div>
+        <div class="team-score"></div>
+        <div class="team-btn-group">
+          <button class="score-btn add" type="button" data-action="adjust-score" data-delta="100">+100</button>
+          <button class="score-btn sub" type="button" data-action="adjust-score" data-delta="-100">-100</button>
+        </div>
+      </div>
+    </template>
+
+    <template id="tmpl-cat-header">
+      <div class="cat-header">
+        <button class="cat-name" type="button" title="Click to rename" data-action="edit-category"></button>
+      </div>
+    </template>
+
+    <template id="tmpl-tile">
+      <button class="tile" type="button" data-action="open-question">
+        <span class="tile-pts"></span>
+      </button>
+    </template>
+
+    <template id="tmpl-ts-chip">
+      <button class="ts-chip" type="button" data-action="select-awarding"></button>
+    </template>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

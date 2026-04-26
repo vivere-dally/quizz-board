@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;600;700&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+button { font: inherit; color: inherit; appearance: none; }
 
 :root {
   --blue-dark: #0a1628;
@@ -176,6 +177,9 @@ h1 {
 }
 
 .cat-name {
+  background: none;
+  border: none;
+  padding: 0;
   font-family: 'Bebas Neue', sans-serif;
   font-size: clamp(1rem, 2vw, 1.4rem);
   letter-spacing: 0.08em;
@@ -229,6 +233,14 @@ h1 {
 }
 
 .tile.used .tile-pts { color: #2a3a5a; }
+.tile:disabled { opacity: 1; }
+
+.tile:focus-visible,
+.cat-name:focus-visible,
+.ts-chip:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
 
 /* ── CONTROLS ── */
 .controls {
@@ -898,6 +910,30 @@ h1 {
   font-size: 11px;
   color: rgba(168,85,247,0.7);
   word-break: break-all;
+}
+
+/* ── PERSISTENCE TOAST ── */
+.persistence-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: #3a1010;
+  border: 1px solid #882222;
+  border-radius: 8px;
+  color: #ff8888;
+  font-family: 'Barlow', sans-serif;
+  font-size: 13px;
+  padding: 12px 18px;
+  z-index: 500;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+}
+
+.persistence-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 ::-webkit-scrollbar-track { background: #0a1628; }
