@@ -44,8 +44,8 @@ h1 {
 }
 
 .subtitle {
-  font-size: 13px;
-  color: var(--text-muted);
+  font-size: 14px;
+  color: var(--text-main);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin: 0;
@@ -203,10 +203,11 @@ h1 {
   width: 100%;
   flex: 1;
   min-height: 0;
+  justify-content: center;
 }
 
 .board-column {
-  flex: 1;
+  flex: 0 1 280px;
   display: flex;
   flex-direction: column;
   gap: 4px;

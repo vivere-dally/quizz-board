@@ -44,13 +44,6 @@ function renderControls(): void {
       frag.appendChild(addBtn)
     }
 
-    const editAllBtn = document.createElement('button')
-    editAllBtn.type = 'button'
-    editAllBtn.className = 'ctrl-btn'
-    editAllBtn.textContent = '⚙ Edit All Questions'
-    editAllBtn.dataset.action = 'edit-all'
-    frag.appendChild(editAllBtn)
-
     const resetBtn = document.createElement('button')
     resetBtn.type = 'button'
     resetBtn.className = 'ctrl-btn danger'
