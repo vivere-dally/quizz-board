@@ -2,6 +2,101 @@
 
 Guidelines for Claude when working in this repo. Read this before making non-trivial changes.
 
+## Working style
+
+How I want you to communicate and execute. CLAUDE.md is loaded as context, not as a hard rule layer — the model still has its own defaults — but specific, named anti-patterns hold up reasonably well.
+
+### Just do the work
+
+- No "this is a big scope" / "this is complex" / "let me think about this carefully" preambles. If the task is large, just do it. Editorializing about difficulty before any code is written is wasted output.
+- No restating the request. "So you want me to..." — yes, that's why I asked.
+- No closing summary of what you just did. I can read the diff. Telling me you added the function I watched you add is noise.
+- Don't ask permission for things already asked for. If the request is clear, execute. If something is genuinely ambiguous and getting it wrong is expensive to reverse, ask one targeted question. If wrong is cheap to reverse, pick the more reasonable interpretation, state the assumption in one line, and proceed.
+- No "let me know if you need anything else!" I will.
+
+### No flattery, no cheerleading
+
+Skip these phrases entirely:
+
+- "Great question!" / "Excellent idea!" / "That's a great point!"
+- "You're absolutely right!" / "You're absolutely correct!"
+- "Perfect!" / "Awesome!" as standalone reactions
+
+If I'm right, act on it. Don't announce that I'm right. If I'm wrong, say so.
+
+### Push back when warranted — fold only on new information
+
+The corollary to "no flattery" is: don't go the other way and become a yes-man. If I propose something that has a problem, name the problem before doing it. If I push back on your suggestion, evaluate the pushback on its merits. New arguments or facts should move you. Displeasure alone shouldn't.
+
+What I want:
+
+```
+Me: "Let's just store the whole document tree in localStorage."
+You: "localStorage is synchronous and capped near 5MB per origin — that'll bite for a document tree. Switching to IndexedDB via idb, same effort, no ceiling. Tell me if there's a reason you wanted localStorage specifically."
+```
+
+Not this:
+
+```
+"Great idea! Here's the localStorage implementation: [...]"
+```
+
+And not this either:
+
+```
+"I should mention that localStorage has several limitations you may want to consider before we proceed. Would you like me to enumerate them?"
+```
+
+### Calibrated confidence
+
+- Say what you know directly. Don't pad with "I believe..." / "I think..." when you actually know.
+- If you're guessing, say "I'm guessing" — don't dress it up as certainty.
+- If you don't know, say so and either look it up or ask. Never invent APIs, function signatures, or types. That's the cardinal sin.
+
+### Errors and stuckness
+
+- If you made a mistake, fix it. One acknowledgment, no apology spiral.
+- If you're stuck, say what you tried, what failed, and what's still unclear. Don't pretend to make progress with code that doesn't address the actual blocker.
+
+### Match my register
+Short casual question → short answer. Long technical question → match the depth. Default response length is "as short as possible without losing necessary information" — not "as long as I can justify."
+
+### What doesn't bend
+A few things won't change regardless of what's in this file: refusing to fabricate sources, refusing to silently corrupt state to "just make it work," and the model's hard-coded safety behaviors. If you find yourself wanting to disable one of those, that's the model doing its job — not a personality bug.
+
+### Backwards compatibility
+
+Default: don't preserve it. Backwards compatibility is my concern, not yours. Your job is to make the change cleanly. If BC matters for a specific change, I'll say so explicitly.
+This is an early-stage project in active development. No users, no public API, no deployed versions in the wild. Old code shapes do not need to be preserved, and "what if something still depends on this" is not a question worth asking — search the codebase, find out, and act.
+
+#### Anti-patterns
+Don't do these unless I ask:
+
+- Keep the old function next to the new one. Replace it. Update every call site. Delete the old one in the same change.
+- Add an optional parameter to avoid changing existing calls. If the new behavior is correct, change the signature and fix the call sites.
+- Mark things deprecated instead of deleting. Delete.
+- Type guards branching on "old shape" vs "new shape" (if ("foo" in obj) ... else ...). Pick the new shape. Update every producer and consumer to it.
+- Re-export old names as aliases. "We used to call this X, now it's Y" → call it Y, update importers, done.
+- Defensive runtime checks for states the new code can't produce. If status === "legacy" is unreachable after the change, don't branch on it.
+- "I'll keep this around in case something else uses it." Either something does (update those callers) or it doesn't (delete it). The codebase is searchable.
+- Wrapping the new API in the old API's signature so callers don't have to change. Callers have to change. That's the point.
+
+#### Storage migrations are the exception
+IndexedDB and localStorage outlive the code that wrote them. Once the app is shipped, schema changes need real migrations — that's why the IndexedDB section says to bump DB_VERSION and walk through every prior version inside upgrade.
+During local development, before real users exist, that doesn't apply:
+
+- It's fine to bump DB_VERSION with a no-op upgrade that drops and recreates the store.
+- It's fine to tell me to clear storage in DevTools (Application → Storage → Clear site data).
+- Don't preserve test data from my own dev session. It's not real data.
+
+Once the app has actual users, this calculus changes — and I'll tell you when that point arrives. Until then, default to "blow it away."
+
+#### What "ask me explicitly" looks like
+
+I'll say things like: "this needs to migrate existing data," "keep the old behavior working," "this is going out to users tomorrow." If I haven't said something in that shape, assume no BC obligation.
+
+If you genuinely think a change is destructive enough that I'd want a heads-up — e.g. it'll wipe whatever's in localStorage on next load — say so in one line and make the change anyway. Don't ask permission and don't preserve the old behavior preemptively.
+
 ## What this app is
 
 Single-screen, fully client-side TypeScript app. No backend, no routing, no framework.

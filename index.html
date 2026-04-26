@@ -8,16 +8,12 @@
   </head>
   <body>
     <h1>QUIZ BOARD</h1>
-    <p class="subtitle">Click a category name to edit &bull; Click a tile to play</p>
+    <p class="subtitle" id="subtitle"></p>
 
     <div class="scoreboard" id="scoreboard"></div>
     <div class="board" id="board"></div>
 
-    <div class="controls" id="controls">
-      <button class="ctrl-btn" type="button" data-action="edit-all">&#9881; Edit All Questions</button>
-      <button class="ctrl-btn" type="button" data-action="show-winner">&#127942; Show Winner</button>
-      <button class="ctrl-btn danger" type="button" data-action="reset-board">&#8635; Reset Board</button>
-    </div>
+    <div class="controls" id="controls"></div>
 
     <!-- Question Modal -->
     <div class="overlay" id="q-overlay" style="display: none">
@@ -66,7 +62,13 @@
       </div>
     </div>
 
-    <audio id="music-audio" style="display: none"></audio>
+    <!-- Team Setup Modal -->
+    <div class="overlay" id="team-setup-overlay" style="display: none">
+      <div class="modal team-setup-modal" id="team-setup-modal">
+        <button class="modal-close" type="button" id="btn-close-team-setup">&#10005;</button>
+        <div id="team-setup-content"></div>
+      </div>
+    </div>
 
     <!-- Templates -->
     <template id="tmpl-team-card">

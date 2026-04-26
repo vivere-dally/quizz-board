@@ -1,25 +1,33 @@
 import './style.css'
-import { CATEGORY_KIND, loadAppData, saveAppData } from './persistence/db.ts'
-import type { AppData, Category, CategoryKind, MusicQuestion } from './persistence/db.ts'
+import { APP_MODE, CATEGORY_COLOR, loadAppData, saveAppData } from './persistence/db.ts'
+import type { AppData, Category, CategoryColor, Question } from './persistence/db.ts'
 
 type ActiveQ = {
   catIdx: number
   qIdx: number
   pts: number
-  kind: CategoryKind
 }
 
 // ── Constants ──
 
-const POINTS = [100, 200, 300, 400, 500] as const
+const COLOR_ORDER = [
+  CATEGORY_COLOR.blue, CATEGORY_COLOR.orange, CATEGORY_COLOR.purple,
+  CATEGORY_COLOR.green, CATEGORY_COLOR.red, CATEGORY_COLOR.teal,
+  CATEGORY_COLOR.pink, CATEGORY_COLOR.yellow,
+] as const
+
+const MAX_CATEGORIES = 12
 
 // ── State ──
 
 const data: AppData = {
+  mode: APP_MODE.edit,
   categories: [
     {
-      kind: CATEGORY_KIND.standard,
+      id: crypto.randomUUID(),
       name: 'Science',
+      color: CATEGORY_COLOR.blue,
+      points: [100, 200, 300, 400, 500],
       questions: [
         { q: 'What planet is known as the Red Planet?', a: 'Mars' },
         { q: 'What is the chemical symbol for water?', a: 'H₂O' },
@@ -29,8 +37,10 @@ const data: AppData = {
       ],
     },
     {
-      kind: CATEGORY_KIND.standard,
+      id: crypto.randomUUID(),
       name: 'History',
+      color: CATEGORY_COLOR.orange,
+      points: [100, 200, 300, 400, 500],
       questions: [
         { q: 'In what year did World War II end?', a: '1945' },
         { q: 'Who was the first President of the United States?', a: 'George Washington' },
@@ -40,8 +50,10 @@ const data: AppData = {
       ],
     },
     {
-      kind: CATEGORY_KIND.standard,
+      id: crypto.randomUUID(),
       name: 'Geography',
+      color: CATEGORY_COLOR.green,
+      points: [100, 200, 300, 400, 500],
       questions: [
         { q: 'What is the capital of Australia?', a: 'Canberra' },
         { q: 'Which is the longest river in the world?', a: 'The Nile' },
@@ -51,8 +63,10 @@ const data: AppData = {
       ],
     },
     {
-      kind: CATEGORY_KIND.standard,
+      id: crypto.randomUUID(),
       name: 'Pop Culture',
+      color: CATEGORY_COLOR.purple,
+      points: [100, 200, 300, 400, 500],
       questions: [
         { q: "Which movie features the line 'To infinity and beyond!'?", a: 'Toy Story' },
         { q: 'What band was Freddie Mercury the lead singer of?', a: 'Queen' },
@@ -62,8 +76,10 @@ const data: AppData = {
       ],
     },
     {
-      kind: CATEGORY_KIND.standard,
+      id: crypto.randomUUID(),
       name: 'Sports',
+      color: CATEGORY_COLOR.red,
+      points: [100, 200, 300, 400, 500],
       questions: [
         { q: 'How many players are on a standard soccer (football) team?', a: '11' },
         { q: 'In what city are the 2028 Summer Olympics being held?', a: 'Los Angeles' },
@@ -73,8 +89,10 @@ const data: AppData = {
       ],
     },
     {
-      kind: CATEGORY_KIND.standard,
+      id: crypto.randomUUID(),
       name: 'Words & Language',
+      color: CATEGORY_COLOR.teal,
+      points: [100, 200, 300, 400, 500],
       questions: [
         { q: 'What is a word that reads the same forwards and backwards?', a: "Palindrome (e.g. 'racecar')" },
         { q: 'How many letters are in the English alphabet?', a: '26' },
@@ -83,47 +101,21 @@ const data: AppData = {
         { q: 'Which punctuation mark looks like a period with a comma below it?', a: 'Semicolon ( ; )' },
       ],
     },
-    {
-      kind: CATEGORY_KIND.music,
-      name: 'Music',
-      questions: [
-        { q: 'Write your question here', a: 'Write your answer here', mp3: '' },
-        { q: 'Write your question here', a: 'Write your answer here', mp3: '' },
-        { q: 'Write your question here', a: 'Write your answer here', mp3: '' },
-        { q: 'Write your question here', a: 'Write your answer here', mp3: '' },
-        { q: 'Write your question here', a: 'Write your answer here', mp3: '' },
-      ],
-    },
-    {
-      kind: CATEGORY_KIND.x2,
-      name: 'X2',
-      questions: [
-        { q: 'Write your hard question here', a: 'Write your answer here' },
-        { q: 'Write your hard question here', a: 'Write your answer here' },
-        { q: 'Write your hard question here', a: 'Write your answer here' },
-        { q: 'Write your hard question here', a: 'Write your answer here' },
-        { q: 'Write your hard question here', a: 'Write your answer here' },
-      ],
-    },
   ],
-  teams: [
-    { name: 'Team 1', score: 0 },
-    { name: 'Team 2', score: 0 },
-    { name: 'Team 3', score: 0 },
-  ],
+  teams: [],
   used: {},
 }
 
 let activeQ: ActiveQ | null = null
 let selectedTeamIdx = 0
 const imgStaging: Record<string, string> = {}
-const mp3Staging: Record<string, string> = {}
 
 // ── Persistence ──
 
 async function loadData(): Promise<void> {
   const saved = await loadAppData()
   if (saved) {
+    data.mode = saved.mode
     data.categories = saved.categories
     data.teams = saved.teams
     data.used = saved.used
@@ -156,11 +148,86 @@ function $(id: string): HTMLElement {
   return el
 }
 
+function nextColor(): CategoryColor {
+  const usedColors = new Set(data.categories.map((c) => c.color))
+  return COLOR_ORDER.find((c) => !usedColors.has(c)) ?? CATEGORY_COLOR.blue
+}
+
+// ── Mode ──
+
+function switchMode(mode: typeof APP_MODE.edit | typeof APP_MODE.play): void {
+  data.mode = mode
+  saveData()
+  renderAll()
+}
+
 // ── Render ──
 
 function renderAll(): void {
-  renderScoreboard()
+  renderSubtitle()
+  renderControls()
+  if (data.mode === APP_MODE.play) {
+    renderScoreboard()
+  } else {
+    $('scoreboard').textContent = ''
+  }
   renderBoard()
+}
+
+function renderSubtitle(): void {
+  const el = $('subtitle')
+  if (data.mode === APP_MODE.edit) {
+    el.textContent = 'Click a category to edit • Click a tile to edit a question'
+  } else {
+    el.textContent = 'Click a tile to play'
+  }
+}
+
+function renderControls(): void {
+  const el = $('controls')
+  el.textContent = ''
+  const frag = document.createDocumentFragment()
+
+  if (data.mode === APP_MODE.edit) {
+    if (data.categories.length < MAX_CATEGORIES) {
+      const addBtn = document.createElement('button')
+      addBtn.type = 'button'
+      addBtn.className = 'ctrl-btn'
+      addBtn.textContent = '+ Add Category'
+      addBtn.dataset.action = 'add-category'
+      frag.appendChild(addBtn)
+    }
+
+    const editAllBtn = document.createElement('button')
+    editAllBtn.type = 'button'
+    editAllBtn.className = 'ctrl-btn'
+    editAllBtn.textContent = '⚙ Edit All Questions'
+    editAllBtn.dataset.action = 'edit-all'
+    frag.appendChild(editAllBtn)
+
+    const playBtn = document.createElement('button')
+    playBtn.type = 'button'
+    playBtn.className = 'ctrl-btn play-btn'
+    playBtn.textContent = '▶ Play Quiz'
+    playBtn.dataset.action = 'play-quiz'
+    frag.appendChild(playBtn)
+  } else {
+    const winnerBtn = document.createElement('button')
+    winnerBtn.type = 'button'
+    winnerBtn.className = 'ctrl-btn'
+    winnerBtn.textContent = '🏆 Show Winner'
+    winnerBtn.dataset.action = 'show-winner'
+    frag.appendChild(winnerBtn)
+
+    const cancelBtn = document.createElement('button')
+    cancelBtn.type = 'button'
+    cancelBtn.className = 'ctrl-btn danger'
+    cancelBtn.textContent = '✕ Cancel Game'
+    cancelBtn.dataset.action = 'cancel-game'
+    frag.appendChild(cancelBtn)
+  }
+
+  el.appendChild(frag)
 }
 
 function renderScoreboard(): void {
@@ -185,87 +252,65 @@ function renderScoreboard(): void {
     frag.appendChild(card)
   }
 
-  if (data.teams.length < 6) {
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = 'add-team-btn'
-    btn.textContent = '+ Add Team'
-    btn.dataset.action = 'add-team'
-    frag.appendChild(btn)
-  }
-
   el.textContent = ''
   el.appendChild(frag)
 }
 
 function renderBoard(): void {
   const el = $('board')
-  el.style.gridTemplateColumns = `repeat(${data.categories.length}, 1fr)`
-
   const frag = document.createDocumentFragment()
+  const isEdit = data.mode === APP_MODE.edit
 
   for (const [ci, cat] of data.categories.entries()) {
+    const col = document.createElement('div')
+    col.className = 'board-column'
+    col.dataset.color = cat.color
+
     const header = cloneTemplate('tmpl-cat-header')
     const catName = header.querySelector('.cat-name') as HTMLButtonElement
     catName.textContent = cat.name
     catName.dataset.ci = String(ci)
 
-    switch (cat.kind) {
-      case CATEGORY_KIND.x2: {
-        header.classList.add('x2-header')
-        const badge = document.createElement('div')
-        badge.className = 'x2-badge'
-        badge.textContent = 'DOUBLE SCORE'
-        header.appendChild(badge)
-        break
-      }
-      case CATEGORY_KIND.music: {
-        header.classList.add('music-header')
-        const badge = document.createElement('div')
-        badge.className = 'music-badge'
-        badge.textContent = '🎵 MUSIC'
-        header.appendChild(badge)
-        break
-      }
-      case CATEGORY_KIND.standard: {
-        const editIcon = document.createElement('span')
-        editIcon.className = 'cat-edit-icon'
-        editIcon.textContent = '✎'
-        header.appendChild(editIcon)
-        break
-      }
+    if (isEdit) {
+      const editIcon = document.createElement('span')
+      editIcon.className = 'cat-edit-icon'
+      editIcon.textContent = '✎'
+      header.appendChild(editIcon)
     }
 
-    frag.appendChild(header)
-  }
+    col.appendChild(header)
 
-  for (const [pi, pts] of POINTS.entries()) {
-    for (const [ci, cat] of data.categories.entries()) {
-      const used = !!data.used[`${ci}-${pi}`]
+    for (const [qi, pts] of cat.points.entries()) {
       const tile = cloneTemplate('tmpl-tile')
       const tileBtn = tile as HTMLButtonElement
-
       tileBtn.dataset.ci = String(ci)
-      tileBtn.dataset.pi = String(pi)
-
-      if (cat.kind === CATEGORY_KIND.x2) tileBtn.classList.add('x2-tile')
-      if (cat.kind === CATEGORY_KIND.music) tileBtn.classList.add('music-tile')
+      tileBtn.dataset.qi = String(qi)
 
       const ptsSpan = tileBtn.querySelector('.tile-pts') as HTMLElement
-      if (cat.kind === CATEGORY_KIND.x2) {
-        ptsSpan.className = 'bomb-icon'
-        ptsSpan.textContent = '💣'
-      } else {
-        ptsSpan.textContent = String(pts)
+      ptsSpan.textContent = String(pts)
+
+      if (!isEdit) {
+        const used = !!data.used[`${cat.id}-${qi}`]
+        if (used) {
+          tileBtn.classList.add('used')
+          tileBtn.disabled = true
+        }
       }
 
-      if (used) {
-        tileBtn.classList.add('used')
-        tileBtn.disabled = true
-      }
-
-      frag.appendChild(tileBtn)
+      col.appendChild(tileBtn)
     }
+
+    if (isEdit && data.categories.length > 1) {
+      const removeBtn = document.createElement('button')
+      removeBtn.type = 'button'
+      removeBtn.className = 'remove-cat-btn'
+      removeBtn.textContent = '✕ Remove'
+      removeBtn.dataset.action = 'remove-category'
+      removeBtn.dataset.ci = String(ci)
+      col.appendChild(removeBtn)
+    }
+
+    frag.appendChild(col)
   }
 
   el.textContent = ''
@@ -301,31 +346,16 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   const q = cat.questions[qIdx]
   if (!q) return
 
-  activeQ = { catIdx, qIdx, pts, kind: cat.kind }
+  activeQ = { catIdx, qIdx, pts }
 
   const modal = $('q-modal')
   modal.className = 'modal'
-  if (cat.kind === CATEGORY_KIND.x2) modal.classList.add('x2-modal')
-  if (cat.kind === CATEGORY_KIND.music) modal.classList.add('music-modal')
+  modal.dataset.color = cat.color
 
-  const mPts = $('m-pts')
-  const mCat = $('m-cat')
-  switch (cat.kind) {
-    case CATEGORY_KIND.x2:
-      mPts.textContent = '💣 X2'
-      mCat.textContent = 'DOUBLE SCORE — ' + cat.name.toUpperCase()
-      break
-    case CATEGORY_KIND.music:
-      mPts.textContent = '🎵 ' + pts
-      mCat.textContent = 'MUSIC — ' + cat.name.toUpperCase()
-      break
-    case CATEGORY_KIND.standard:
-      mPts.textContent = String(pts)
-      mCat.textContent = cat.name.toUpperCase()
-      break
-  }
-
+  $('m-pts').textContent = String(pts)
+  $('m-cat').textContent = cat.name.toUpperCase()
   $('m-question').textContent = q.q
+
   const mAnswer = $('m-answer')
   mAnswer.textContent = 'Answer: ' + q.a
   mAnswer.style.display = 'none'
@@ -338,59 +368,6 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   } else {
     imgEl.src = ''
     imgWrap.style.display = 'none'
-  }
-
-  let ytWrap = document.getElementById('m-yt-play-wrap')
-  if (!ytWrap) {
-    ytWrap = document.createElement('div')
-    ytWrap.id = 'm-yt-play-wrap'
-    ytWrap.className = 'yt-play-wrap'
-    imgWrap.after(ytWrap)
-  }
-
-  const mp3Src = cat.kind === CATEGORY_KIND.music ? (q as MusicQuestion).mp3 : ''
-  if (mp3Src.trim()) {
-    ytWrap.textContent = ''
-    const playBtn = document.createElement('button')
-    playBtn.type = 'button'
-    playBtn.className = 'yt-play-btn'
-    playBtn.id = 'mp3-play-btn'
-    playBtn.dataset.action = 'toggle-mp3'
-    const playIcon = document.createElement('span')
-    playIcon.id = 'mp3-play-icon'
-    playIcon.style.cssText =
-      'font-size:18px;line-height:1;width:32px;height:32px;background:var(--purple-dark);border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0'
-    playIcon.textContent = '▶'
-    const playLabel = document.createElement('span')
-    playLabel.id = 'mp3-play-label'
-    playLabel.textContent = 'Play'
-    playBtn.appendChild(playIcon)
-    playBtn.appendChild(playLabel)
-    ytWrap.appendChild(playBtn)
-    ytWrap.style.display = 'flex'
-
-    const audio = $('music-audio') as HTMLAudioElement
-    audio.src = mp3Src
-    audio.load()
-    audio.onended = resetMp3Btn
-  } else {
-    ytWrap.textContent = ''
-    ytWrap.style.display = 'none'
-    stopMp3()
-  }
-
-  let x2Label = document.getElementById('x2-info-label')
-  if (!x2Label) {
-    x2Label = document.createElement('div')
-    x2Label.id = 'x2-info-label'
-    x2Label.className = 'x2-label'
-    $('m-question').before(x2Label)
-  }
-  if (cat.kind === CATEGORY_KIND.x2) {
-    x2Label.textContent = "Correct answer doubles this player's current score! (x2)"
-    x2Label.style.display = 'block'
-  } else {
-    x2Label.style.display = 'none'
   }
 
   $('btn-reveal').style.display = 'inline-flex'
@@ -410,17 +387,8 @@ function revealAnswer(): void {
 
 function markResult(correct: boolean): void {
   if (!activeQ) return
-  const team = data.teams[selectedTeamIdx]
-  if (!team) return
-
-  if (activeQ.kind === CATEGORY_KIND.x2 && correct) {
-    team.score *= 2
-    saveData()
-    renderScoreboard()
-  } else if (activeQ.kind !== CATEGORY_KIND.x2) {
-    const delta = correct ? activeQ.pts : -activeQ.pts
-    adjustScore(selectedTeamIdx, delta)
-  }
+  const delta = correct ? activeQ.pts : -activeQ.pts
+  adjustScore(selectedTeamIdx, delta)
   markUsed()
   closeQModal()
 }
@@ -433,7 +401,9 @@ function skipQuestion(): void {
 
 function markUsed(): void {
   if (!activeQ) return
-  data.used[`${activeQ.catIdx}-${activeQ.qIdx}`] = true
+  const cat = data.categories[activeQ.catIdx]
+  if (!cat) return
+  data.used[`${cat.id}-${activeQ.qIdx}`] = true
   saveData()
   renderBoard()
   activeQ = null
@@ -441,56 +411,102 @@ function markUsed(): void {
 
 function closeQModal(): void {
   $('q-overlay').style.display = 'none'
-  stopMp3()
   activeQ = null
 }
 
-// ── Audio ──
-
-function toggleMp3(): void {
-  const audio = document.getElementById('music-audio') as HTMLAudioElement | null
-  if (!audio || !audio.src || audio.src === window.location.href) return
-
-  const label = document.getElementById('mp3-play-label')
-  const icon = document.getElementById('mp3-play-icon')
-  const btn = document.getElementById('mp3-play-btn')
-
-  if (audio.paused) {
-    audio.play().then(() => {
-      if (label) label.textContent = 'Pause'
-      if (icon) icon.textContent = '⏸'
-      if (btn) btn.style.boxShadow = '0 0 20px var(--purple-glow)'
-    }).catch((err: unknown) => {
-      console.error('Audio play failed:', err)
-    })
-  } else {
-    audio.pause()
-    if (label) label.textContent = 'Play'
-    if (icon) icon.textContent = '▶'
-    if (btn) btn.style.boxShadow = ''
-  }
-}
-
-function resetMp3Btn(): void {
-  const btn = document.getElementById('mp3-play-btn')
-  const label = document.getElementById('mp3-play-label')
-  const icon = document.getElementById('mp3-play-icon')
-  if (btn) btn.style.boxShadow = ''
-  if (label) label.textContent = 'Play'
-  if (icon) icon.textContent = '▶'
-}
-
-function stopMp3(): void {
-  const audio = document.getElementById('music-audio') as HTMLAudioElement | null
-  if (audio) {
-    audio.pause()
-    audio.currentTime = 0
-    audio.src = ''
-  }
-  resetMp3Btn()
-}
-
 // ── Category Edit ──
+
+function buildEditQuestionRow(qi: number, pts: number, q: string, a: string, canRemove: boolean, origQi: number): HTMLElement {
+  const wrap = document.createElement('div')
+  wrap.className = 'ec-question-row'
+  wrap.dataset.origQi = String(origQi)
+
+  const header = document.createElement('div')
+  header.className = 'ec-question-header'
+
+  const ptsLabel = document.createElement('span')
+  ptsLabel.className = 'ec-pts-label'
+  ptsLabel.textContent = 'Points:'
+  header.appendChild(ptsLabel)
+
+  const ptsInput = document.createElement('input')
+  ptsInput.type = 'number'
+  ptsInput.className = 'ec-pts-input'
+  ptsInput.value = String(pts)
+  ptsInput.min = '0'
+  ptsInput.step = '50'
+  header.appendChild(ptsInput)
+
+  if (canRemove) {
+    const removeBtn = document.createElement('button')
+    removeBtn.type = 'button'
+    removeBtn.className = 'ec-remove-btn'
+    removeBtn.textContent = '✕'
+    removeBtn.dataset.action = 'remove-question'
+    removeBtn.dataset.qi = String(qi)
+    header.appendChild(removeBtn)
+  }
+
+  wrap.appendChild(header)
+
+  const qLabel = document.createElement('div')
+  qLabel.className = 'field-label'
+  qLabel.style.cssText = 'margin-top:6px;font-size:10px'
+  qLabel.textContent = 'Question'
+  wrap.appendChild(qLabel)
+
+  const qInput = document.createElement('input')
+  qInput.className = 'edit-input ec-q-input'
+  qInput.value = q
+  wrap.appendChild(qInput)
+
+  const aLabel = document.createElement('div')
+  aLabel.className = 'field-label'
+  aLabel.style.fontSize = '10px'
+  aLabel.textContent = 'Answer'
+  wrap.appendChild(aLabel)
+
+  const aInput = document.createElement('input')
+  aInput.className = 'edit-input ec-a-input'
+  aInput.value = a
+  wrap.appendChild(aInput)
+
+  return wrap
+}
+
+function renderEditQuestions(cat: Category): void {
+  const wrap = document.getElementById('ec-questions')
+  if (!wrap) return
+  wrap.textContent = ''
+  const canRemove = cat.questions.length > 1
+  for (const [qi, question] of cat.questions.entries()) {
+    wrap.appendChild(buildEditQuestionRow(qi, cat.points[qi] ?? 100, question.q, question.a, canRemove, qi))
+  }
+}
+
+function readEditFormIntoCategory(ci: number): void {
+  const cat = data.categories[ci]
+  if (!cat) return
+  const rows = document.querySelectorAll('#ec-questions .ec-question-row')
+  const newQuestions: Question[] = []
+  const newPoints: number[] = []
+
+  for (const row of rows) {
+    const ptsEl = row.querySelector('.ec-pts-input') as HTMLInputElement | null
+    const qEl = row.querySelector('.ec-q-input') as HTMLInputElement | null
+    const aEl = row.querySelector('.ec-a-input') as HTMLInputElement | null
+    const origQi = Number((row as HTMLElement).dataset.origQi)
+    const origQuestion = origQi >= 0 ? cat.questions[origQi] : undefined
+
+    newPoints.push(Number(ptsEl?.value) || 100)
+    const question: Question = { q: qEl?.value ?? '', a: aEl?.value ?? '' }
+    if (origQuestion?.img) question.img = origQuestion.img
+    newQuestions.push(question)
+  }
+
+  cat.questions = newQuestions
+  cat.points = newPoints
+}
 
 function editCategory(ci: number): void {
   const cat = data.categories[ci]
@@ -515,48 +531,45 @@ function editCategory(ci: number): void {
   nameInput.value = cat.name
   content.appendChild(nameInput)
 
+  const colorLabel = document.createElement('div')
+  colorLabel.className = 'field-label'
+  colorLabel.style.marginTop = '16px'
+  colorLabel.textContent = 'Color'
+  content.appendChild(colorLabel)
+
+  const colorRow = document.createElement('div')
+  colorRow.className = 'color-picker-row'
+  colorRow.id = 'ec-colors'
+  for (const c of COLOR_ORDER) {
+    const swatch = document.createElement('button')
+    swatch.type = 'button'
+    swatch.className = 'color-swatch'
+    swatch.dataset.color = c
+    swatch.dataset.action = 'pick-color'
+    if (c === cat.color) swatch.classList.add('selected')
+    colorRow.appendChild(swatch)
+  }
+  content.appendChild(colorRow)
+
   const qTitle = document.createElement('div')
   qTitle.className = 'field-label'
   qTitle.style.marginTop = '20px'
-  qTitle.textContent = 'Quick Edit Questions'
+  qTitle.textContent = 'Questions'
   content.appendChild(qTitle)
 
-  for (const [pi, pts] of POINTS.entries()) {
-    const wrap = document.createElement('div')
-    wrap.style.marginBottom = '14px'
+  const questionsWrap = document.createElement('div')
+  questionsWrap.id = 'ec-questions'
+  content.appendChild(questionsWrap)
 
-    const ptsLabel = document.createElement('div')
-    ptsLabel.style.cssText =
-      'font-size:11px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em'
-    ptsLabel.textContent = `${pts} pts`
-    wrap.appendChild(ptsLabel)
+  renderEditQuestions(cat)
 
-    const qLabel = document.createElement('div')
-    qLabel.className = 'field-label'
-    qLabel.style.cssText = 'margin-top:6px;font-size:10px'
-    qLabel.textContent = 'Question'
-    wrap.appendChild(qLabel)
-
-    const qInput = document.createElement('input')
-    qInput.className = 'edit-input'
-    qInput.id = `ec-q-${pi}`
-    qInput.value = cat.questions[pi]?.q ?? ''
-    wrap.appendChild(qInput)
-
-    const aLabel = document.createElement('div')
-    aLabel.className = 'field-label'
-    aLabel.style.fontSize = '10px'
-    aLabel.textContent = 'Answer'
-    wrap.appendChild(aLabel)
-
-    const aInput = document.createElement('input')
-    aInput.className = 'edit-input'
-    aInput.id = `ec-a-${pi}`
-    aInput.value = cat.questions[pi]?.a ?? ''
-    wrap.appendChild(aInput)
-
-    content.appendChild(wrap)
-  }
+  const addQBtn = document.createElement('button')
+  addQBtn.type = 'button'
+  addQBtn.className = 'edit-add-btn'
+  addQBtn.textContent = '+ Add Question'
+  addQBtn.dataset.action = 'add-question'
+  addQBtn.dataset.ci = String(ci)
+  content.appendChild(addQBtn)
 
   const saveBtn = document.createElement('button')
   saveBtn.type = 'button'
@@ -572,23 +585,17 @@ function editCategory(ci: number): void {
 function saveCategoryEdit(ci: number): void {
   const cat = data.categories[ci]
   if (!cat) return
+
   const nameEl = document.getElementById('ec-name') as HTMLInputElement | null
   if (nameEl) cat.name = nameEl.value.trim() || cat.name
 
-  for (const [pi] of POINTS.entries()) {
-    const qEl = document.getElementById(`ec-q-${pi}`) as HTMLInputElement | null
-    const aEl = document.getElementById(`ec-a-${pi}`) as HTMLInputElement | null
-    if (!qEl || !aEl) continue
-    const existing = cat.questions[pi]
-    if (existing) {
-      existing.q = qEl.value
-      existing.a = aEl.value
-    } else if (cat.kind === CATEGORY_KIND.music) {
-      cat.questions[pi] = { q: qEl.value, a: aEl.value, mp3: '' }
-    } else {
-      cat.questions[pi] = { q: qEl.value, a: aEl.value }
-    }
+  const selectedSwatch = document.querySelector('#ec-colors .color-swatch.selected') as HTMLElement | null
+  const color = selectedSwatch?.dataset.color
+  if (color && Object.values(CATEGORY_COLOR).includes(color as CategoryColor)) {
+    cat.color = color as CategoryColor
   }
+
+  readEditFormIntoCategory(ci)
   saveData()
   renderAll()
   closeEditModal()
@@ -600,23 +607,19 @@ function closeEditModal(): void {
 
 // ── Admin Panel ──
 
-function buildAdminAccordion(cat: Category, ci: number, pi: number, pts: number): HTMLElement {
-  const q = cat.questions[pi]
+function buildAdminAccordion(cat: Category, ci: number, qi: number, pts: number): HTMLElement {
+  const q = cat.questions[qi]
   const hasImg = !!q?.img
-  const hasMp3 = cat.kind === CATEGORY_KIND.music && !!(q as MusicQuestion | undefined)?.mp3
-  const isX2 = cat.kind === CATEGORY_KIND.x2
-  const isMusic = cat.kind === CATEGORY_KIND.music
 
   const accordion = document.createElement('div')
-  accordion.className = 'q-accordion' + (isX2 ? ' x2-acc' : isMusic ? ' music-acc' : '')
+  accordion.className = 'q-accordion'
 
   const accHeader = document.createElement('div')
   accHeader.className = 'q-acc-header'
   accHeader.dataset.action = 'toggle-accordion'
   const headerLabel = document.createElement('span')
-  let headerText = (isX2 ? '💣 ' : isMusic ? '🎵 ' : '') + pts + (isX2 ? ' — Double Score' : ' pts')
+  let headerText = pts + ' pts'
   if (hasImg) headerText += ' 📷'
-  if (hasMp3) headerText += ' 🎵'
   headerLabel.textContent = headerText
   const arrow = document.createElement('span')
   arrow.style.cssText = 'font-size:11px;opacity:.6'
@@ -629,42 +632,39 @@ function buildAdminAccordion(cat: Category, ci: number, pi: number, pts: number)
   const fieldRow = document.createElement('div')
   fieldRow.className = 'q-field-row'
 
-  const labelColor = isX2 ? 'rgba(255,122,0,0.8)' : isMusic ? 'rgba(168,85,247,0.9)' : 'var(--text-muted)'
-
   const qLabel = document.createElement('label')
-  qLabel.style.cssText = `font-size:10px;color:${labelColor};text-transform:uppercase;letter-spacing:.08em`
+  qLabel.style.cssText = 'font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em'
   qLabel.textContent = 'Question'
   fieldRow.appendChild(qLabel)
 
   const qTextarea = document.createElement('textarea')
   qTextarea.className = 'mini-textarea'
-  qTextarea.id = `adm-q-${ci}-${pi}`
+  qTextarea.id = `adm-q-${ci}-${qi}`
   qTextarea.textContent = q?.q ?? ''
   fieldRow.appendChild(qTextarea)
 
   const aLabel = document.createElement('label')
-  aLabel.style.cssText = `font-size:10px;color:${labelColor};text-transform:uppercase;letter-spacing:.08em`
+  aLabel.style.cssText = 'font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em'
   aLabel.textContent = 'Answer'
   fieldRow.appendChild(aLabel)
 
   const aInput = document.createElement('input')
   aInput.className = 'mini-input'
-  aInput.id = `adm-a-${ci}-${pi}`
+  aInput.id = `adm-a-${ci}-${qi}`
   aInput.value = q?.a ?? ''
   fieldRow.appendChild(aInput)
 
-  // Image upload zone
   const imgZone = document.createElement('div')
-  imgZone.className = 'img-upload-zone' + (isX2 ? ' x2-zone' : '')
+  imgZone.className = 'img-upload-zone'
 
   const imgLabel = document.createElement('span')
-  imgLabel.className = 'img-upload-label' + (isX2 ? ' x2-label-text' : '')
+  imgLabel.className = 'img-upload-label'
   imgLabel.textContent = 'Image (optional) — shown during the question'
   imgZone.appendChild(imgLabel)
 
   const imgPreview = document.createElement('img')
   imgPreview.className = 'img-preview-thumb'
-  imgPreview.id = `adm-img-preview-${ci}-${pi}`
+  imgPreview.id = `adm-img-preview-${ci}-${qi}`
   if (hasImg && q?.img) {
     imgPreview.src = q.img
   } else {
@@ -677,22 +677,22 @@ function buildAdminAccordion(cat: Category, ci: number, pi: number, pts: number)
 
   const chooseImgBtn = document.createElement('button')
   chooseImgBtn.type = 'button'
-  chooseImgBtn.className = 'img-file-btn' + (isX2 ? ' x2-btn' : '')
+  chooseImgBtn.className = 'img-file-btn'
   chooseImgBtn.textContent = '📷 Choose Image'
   chooseImgBtn.dataset.action = 'choose-image'
   chooseImgBtn.dataset.ci = String(ci)
-  chooseImgBtn.dataset.pi = String(pi)
+  chooseImgBtn.dataset.qi = String(qi)
   imgBtnRow.appendChild(chooseImgBtn)
 
   const clearImgBtn = document.createElement('button')
   clearImgBtn.type = 'button'
   clearImgBtn.className = 'img-clear-btn'
-  clearImgBtn.id = `adm-img-clear-${ci}-${pi}`
+  clearImgBtn.id = `adm-img-clear-${ci}-${qi}`
   if (!hasImg) clearImgBtn.style.display = 'none'
   clearImgBtn.textContent = '✗ Remove'
   clearImgBtn.dataset.action = 'clear-image'
   clearImgBtn.dataset.ci = String(ci)
-  clearImgBtn.dataset.pi = String(pi)
+  clearImgBtn.dataset.qi = String(qi)
   imgBtnRow.appendChild(clearImgBtn)
   imgZone.appendChild(imgBtnRow)
 
@@ -700,63 +700,12 @@ function buildAdminAccordion(cat: Category, ci: number, pi: number, pts: number)
   imgFileInput.type = 'file'
   imgFileInput.accept = 'image/*'
   imgFileInput.className = 'admin-img-file'
-  imgFileInput.id = `adm-img-file-${ci}-${pi}`
+  imgFileInput.id = `adm-img-file-${ci}-${qi}`
   imgFileInput.dataset.ci = String(ci)
-  imgFileInput.dataset.pi = String(pi)
+  imgFileInput.dataset.qi = String(qi)
   imgFileInput.style.display = 'none'
   imgZone.appendChild(imgFileInput)
   fieldRow.appendChild(imgZone)
-
-  if (isMusic) {
-    const mp3Zone = document.createElement('div')
-    mp3Zone.className = 'yt-input-zone'
-
-    const mp3Label = document.createElement('span')
-    mp3Label.className = 'yt-input-label'
-    mp3Label.textContent = '🎵 Audio File (MP3) — players click Play to hear it'
-    mp3Zone.appendChild(mp3Label)
-
-    const mp3BtnRow = document.createElement('div')
-    mp3BtnRow.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px'
-
-    const chooseMp3Btn = document.createElement('button')
-    chooseMp3Btn.type = 'button'
-    chooseMp3Btn.className = 'img-file-btn'
-    chooseMp3Btn.textContent = '🎵 Choose MP3'
-    chooseMp3Btn.dataset.action = 'choose-mp3'
-    chooseMp3Btn.dataset.ci = String(ci)
-    chooseMp3Btn.dataset.pi = String(pi)
-    mp3BtnRow.appendChild(chooseMp3Btn)
-
-    const clearMp3Btn = document.createElement('button')
-    clearMp3Btn.type = 'button'
-    clearMp3Btn.className = 'img-clear-btn'
-    clearMp3Btn.id = `adm-mp3-clear-${ci}-${pi}`
-    if (!hasMp3) clearMp3Btn.style.display = 'none'
-    clearMp3Btn.textContent = '✗ Remove'
-    clearMp3Btn.dataset.action = 'clear-mp3'
-    clearMp3Btn.dataset.ci = String(ci)
-    clearMp3Btn.dataset.pi = String(pi)
-    mp3BtnRow.appendChild(clearMp3Btn)
-    mp3Zone.appendChild(mp3BtnRow)
-
-    const mp3Status = document.createElement('div')
-    mp3Status.className = 'yt-link-preview'
-    mp3Status.id = `adm-mp3-status-${ci}-${pi}`
-    mp3Status.textContent = hasMp3 ? '✓ Audio loaded' : 'No audio file yet'
-    mp3Zone.appendChild(mp3Status)
-
-    const mp3FileInput = document.createElement('input')
-    mp3FileInput.type = 'file'
-    mp3FileInput.accept = 'audio/mp3,audio/mpeg,audio/*'
-    mp3FileInput.className = 'admin-mp3-file'
-    mp3FileInput.id = `adm-mp3-file-${ci}-${pi}`
-    mp3FileInput.dataset.ci = String(ci)
-    mp3FileInput.dataset.pi = String(pi)
-    mp3FileInput.style.display = 'none'
-    mp3Zone.appendChild(mp3FileInput)
-    fieldRow.appendChild(mp3Zone)
-  }
 
   accBody.appendChild(fieldRow)
   accordion.appendChild(accHeader)
@@ -780,62 +729,45 @@ function openAdmin(): void {
   content.appendChild(desc)
 
   for (const [ci, cat] of data.categories.entries()) {
-    const isX2 = cat.kind === CATEGORY_KIND.x2
-    const isMusic = cat.kind === CATEGORY_KIND.music
-
     const sectionTitle = document.createElement('div')
-    sectionTitle.className = 'admin-section-title' + (isX2 ? ' x2-title' : isMusic ? ' music-title' : '')
-    const prefix = isX2 ? '💣 ' : isMusic ? '🎵 ' : ''
-    const suffix = isX2 ? ' — X2 Double Score' : isMusic ? ' — Music' : ''
-    sectionTitle.textContent = `${prefix}${cat.name} — Category ${ci + 1}${suffix}`
+    sectionTitle.className = 'admin-section-title'
+    sectionTitle.textContent = `${cat.name} — Category ${ci + 1}`
     content.appendChild(sectionTitle)
 
     const catRow = document.createElement('div')
     catRow.className = 'admin-cat-row'
 
     const catLabel = document.createElement('label')
-    catLabel.style.cssText = `font-size:11px;color:${isX2 ? 'rgba(255,122,0,0.8)' : isMusic ? 'rgba(168,85,247,0.9)' : 'var(--text-muted)'};white-space:nowrap`
+    catLabel.style.cssText = 'font-size:11px;color:var(--text-muted);white-space:nowrap'
     catLabel.textContent = 'Category Name'
     catRow.appendChild(catLabel)
 
     const catInput = document.createElement('input')
-    catInput.className = 'admin-cat-input' + (isX2 ? ' x2-cat-input' : '')
+    catInput.className = 'admin-cat-input'
     catInput.id = `adm-cat-${ci}`
     catInput.value = cat.name
     catRow.appendChild(catInput)
     content.appendChild(catRow)
 
-    for (const [pi, pts] of POINTS.entries()) {
-      content.appendChild(buildAdminAccordion(cat, ci, pi, pts))
+    for (const [qi, pts] of cat.points.entries()) {
+      content.appendChild(buildAdminAccordion(cat, ci, qi, pts))
     }
   }
 
   $('admin-overlay').style.display = 'flex'
 }
 
-function handleAdminImgUpload(ci: number, pi: number, file: File): void {
+function handleAdminImgUpload(ci: number, qi: number, file: File): void {
   const reader = new FileReader()
   reader.onload = (e) => {
     const base64 = (e.target as FileReader).result as string
-    imgStaging[`${ci}-${pi}`] = base64
-    const preview = document.getElementById(`adm-img-preview-${ci}-${pi}`) as HTMLImageElement | null
+    imgStaging[`${ci}-${qi}`] = base64
+    const preview = document.getElementById(`adm-img-preview-${ci}-${qi}`) as HTMLImageElement | null
     if (preview) {
       preview.src = base64
       preview.style.display = 'block'
     }
-    const clearBtn = document.getElementById(`adm-img-clear-${ci}-${pi}`)
-    if (clearBtn) clearBtn.style.display = 'inline-block'
-  }
-  reader.readAsDataURL(file)
-}
-
-function handleAdminMp3Upload(ci: number, pi: number, file: File): void {
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    mp3Staging[`${ci}-${pi}`] = (e.target as FileReader).result as string
-    const status = document.getElementById(`adm-mp3-status-${ci}-${pi}`)
-    if (status) status.textContent = '✓ ' + file.name + ' loaded'
-    const clearBtn = document.getElementById(`adm-mp3-clear-${ci}-${pi}`)
+    const clearBtn = document.getElementById(`adm-img-clear-${ci}-${qi}`)
     if (clearBtn) clearBtn.style.display = 'inline-block'
   }
   reader.readAsDataURL(file)
@@ -846,25 +778,23 @@ function saveAdmin(): void {
     const catInput = document.getElementById(`adm-cat-${ci}`) as HTMLInputElement | null
     if (catInput) cat.name = catInput.value.trim() || cat.name
 
-    for (const [pi] of POINTS.entries()) {
-      const qEl = document.getElementById(`adm-q-${ci}-${pi}`) as HTMLTextAreaElement | null
-      const aEl = document.getElementById(`adm-a-${ci}-${pi}`) as HTMLInputElement | null
+    for (const [qi] of cat.questions.entries()) {
+      const qEl = document.getElementById(`adm-q-${ci}-${qi}`) as HTMLTextAreaElement | null
+      const aEl = document.getElementById(`adm-a-${ci}-${qi}`) as HTMLInputElement | null
       if (!qEl || !aEl) continue
 
-      const existing = cat.questions[pi]
+      const existing = cat.questions[qi]
       if (existing) {
         existing.q = qEl.value
         existing.a = aEl.value
-      } else if (cat.kind === CATEGORY_KIND.music) {
-        cat.questions[pi] = { q: qEl.value, a: aEl.value, mp3: '' }
       } else {
-        cat.questions[pi] = { q: qEl.value, a: aEl.value }
+        cat.questions[qi] = { q: qEl.value, a: aEl.value }
       }
 
-      const question = cat.questions[pi]
+      const question = cat.questions[qi]
       if (!question) continue
 
-      const imgKey = `${ci}-${pi}`
+      const imgKey = `${ci}-${qi}`
       const imgValue = imgStaging[imgKey]
       if (imgValue !== undefined) {
         if (imgValue) {
@@ -873,18 +803,10 @@ function saveAdmin(): void {
           delete question.img
         }
       }
-
-      if (cat.kind === CATEGORY_KIND.music) {
-        const mp3Value = mp3Staging[imgKey]
-        if (mp3Value !== undefined) {
-          (question as MusicQuestion).mp3 = mp3Value
-        }
-      }
     }
   }
 
   clearRecord(imgStaging)
-  clearRecord(mp3Staging)
   saveData()
   renderAll()
   closeAdmin()
@@ -896,18 +818,119 @@ function closeAdmin(): void {
 
 // ── Teams & Scoring ──
 
-function addTeam(): void {
-  data.teams.push({ name: `Team ${data.teams.length + 1}`, score: 0 })
-  saveData()
-  renderScoreboard()
-}
-
 function adjustScore(i: number, delta: number): void {
   const team = data.teams[i]
   if (!team) return
   team.score += delta
   saveData()
   renderScoreboard()
+}
+
+// ── Category Management ──
+
+function addCategory(): void {
+  if (data.categories.length >= MAX_CATEGORIES) return
+  data.categories.push({
+    id: crypto.randomUUID(),
+    name: `Category ${data.categories.length + 1}`,
+    color: nextColor(),
+    points: [100, 200, 300, 400, 500],
+    questions: Array.from({ length: 5 }, () => ({ q: 'Write your question', a: 'Write your answer' })),
+  })
+  saveData()
+  renderAll()
+}
+
+function removeCategory(ci: number): void {
+  const cat = data.categories[ci]
+  if (!cat || data.categories.length <= 1) return
+  if (!confirm(`Remove category "${cat.name}"?`)) return
+  data.categories.splice(ci, 1)
+  saveData()
+  renderAll()
+}
+
+// ── Team Setup ──
+
+function buildTeamSetupRow(index: number): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'ts-team-row'
+
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'edit-input ts-team-name'
+  input.value = `Team ${index + 1}`
+  input.placeholder = 'Team name'
+  row.appendChild(input)
+
+  const removeBtn = document.createElement('button')
+  removeBtn.type = 'button'
+  removeBtn.className = 'ec-remove-btn'
+  removeBtn.textContent = '✕'
+  removeBtn.dataset.action = 'ts-remove-team'
+  row.appendChild(removeBtn)
+
+  return row
+}
+
+function openTeamSetup(): void {
+  const content = $('team-setup-content')
+  content.textContent = ''
+
+  const title = document.createElement('div')
+  title.style.cssText =
+    "font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:.08em;color:var(--gold);margin-bottom:18px"
+  title.textContent = 'Team Setup'
+  content.appendChild(title)
+
+  const teamsWrap = document.createElement('div')
+  teamsWrap.id = 'ts-teams'
+  content.appendChild(teamsWrap)
+
+  for (let i = 0; i < 2; i++) {
+    teamsWrap.appendChild(buildTeamSetupRow(i))
+  }
+
+  const addBtn = document.createElement('button')
+  addBtn.type = 'button'
+  addBtn.className = 'edit-add-btn'
+  addBtn.textContent = '+ Add Team'
+  addBtn.dataset.action = 'ts-add-team'
+  addBtn.id = 'ts-add-btn'
+  content.appendChild(addBtn)
+
+  const startBtn = document.createElement('button')
+  startBtn.type = 'button'
+  startBtn.className = 'edit-save play-btn'
+  startBtn.textContent = '▶ Start Game'
+  startBtn.dataset.action = 'ts-start-game'
+  content.appendChild(startBtn)
+
+  $('team-setup-overlay').style.display = 'flex'
+}
+
+function startGame(): void {
+  const rows = document.querySelectorAll('#ts-teams .ts-team-row')
+  const teams: Array<{ name: string; score: number }> = []
+  for (const row of rows) {
+    const input = row.querySelector('.ts-team-name') as HTMLInputElement | null
+    const name = input?.value.trim() || `Team ${teams.length + 1}`
+    teams.push({ name, score: 0 })
+  }
+  if (teams.length < 2) return
+
+  data.teams = teams
+  data.used = {}
+  selectedTeamIdx = 0
+  $('team-setup-overlay').style.display = 'none'
+  switchMode(APP_MODE.play)
+}
+
+function cancelGame(): void {
+  if (!confirm('Cancel the game? All scores will be lost.')) return
+  data.teams = []
+  data.used = {}
+  switchMode(APP_MODE.edit)
 }
 
 // ── Winner ──
@@ -967,44 +990,31 @@ function showWinner(): void {
   $('winner-overlay').style.display = 'flex'
 }
 
-// ── Reset ──
-
-function resetBoard(): void {
-  if (!confirm('Reset all used tiles? Scores and questions are kept.')) return
-  data.used = {}
-  saveData()
-  renderBoard()
-}
-
 // ── Event Setup ──
 
 function setupEvents(): void {
   const ac = new AbortController()
   const { signal } = ac
 
-  // Keyboard
   document.addEventListener(
     'keydown',
     (e) => {
       if (e.key === 'Escape') {
-        for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay']) {
+        for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay', 'team-setup-overlay']) {
           $(id).style.display = 'none'
         }
-        stopMp3()
       }
     },
     { signal },
   )
 
-  // Overlay dismiss on backdrop click
   function handleOverlayClick(e: MouseEvent): void {
     if (e.target === e.currentTarget) {
       ;(e.currentTarget as HTMLElement).style.display = 'none'
-      if ((e.currentTarget as HTMLElement).id === 'q-overlay') stopMp3()
     }
   }
 
-  for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay']) {
+  for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay', 'team-setup-overlay']) {
     $(id).addEventListener('click', handleOverlayClick, { signal })
   }
 
@@ -1015,14 +1025,20 @@ function setupEvents(): void {
       const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')
       if (!btn) return
       switch (btn.dataset.action) {
+        case 'add-category':
+          addCategory()
+          break
         case 'edit-all':
           openAdmin()
+          break
+        case 'play-quiz':
+          openTeamSetup()
           break
         case 'show-winner':
           showWinner()
           break
-        case 'reset-board':
-          resetBoard()
+        case 'cancel-game':
+          cancelGame()
           break
         default:
           break
@@ -1038,24 +1054,57 @@ function setupEvents(): void {
   $('btn-wrong').addEventListener('click', () => markResult(false), { signal })
   $('btn-skip').addEventListener('click', skipQuestion, { signal })
 
-  // Edit modal
+  // Edit modal delegation
   $('btn-close-edit').addEventListener('click', closeEditModal, { signal })
   $('edit-modal').addEventListener(
     'click',
     (e) => {
-      const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action="save-category"]')
-      if (!btn) return
-      const ci = Number(btn.dataset.ci)
-      saveCategoryEdit(ci)
+      const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')
+      if (!target) return
+
+      switch (target.dataset.action) {
+        case 'save-category':
+          saveCategoryEdit(Number(target.dataset.ci))
+          break
+        case 'pick-color': {
+          document.querySelectorAll('#ec-colors .color-swatch').forEach((s) => s.classList.remove('selected'))
+          target.classList.add('selected')
+          break
+        }
+        case 'add-question': {
+          const ci = Number(target.dataset.ci)
+          const cat = data.categories[ci]
+          if (!cat) break
+          readEditFormIntoCategory(ci)
+          const lastPts = cat.points[cat.points.length - 1] ?? 0
+          cat.questions.push({ q: '', a: '' })
+          cat.points.push(lastPts + 100)
+          renderEditQuestions(cat)
+          break
+        }
+        case 'remove-question': {
+          const saveBtnEl = document.querySelector<HTMLElement>('[data-action="save-category"]')
+          const ci = Number(saveBtnEl?.dataset.ci)
+          const cat = data.categories[ci]
+          if (!cat || cat.questions.length <= 1) break
+          readEditFormIntoCategory(ci)
+          const qi = Number(target.dataset.qi)
+          cat.questions.splice(qi, 1)
+          cat.points.splice(qi, 1)
+          renderEditQuestions(cat)
+          break
+        }
+        default:
+          break
+      }
     },
     { signal },
   )
 
-  // Admin modal buttons
+  // Admin modal
   $('btn-close-admin').addEventListener('click', closeAdmin, { signal })
   $('btn-save-admin').addEventListener('click', saveAdmin, { signal })
 
-  // Admin modal delegation (accordions, image/mp3 buttons)
   $('admin-modal').addEventListener(
     'click',
     (e) => {
@@ -1063,7 +1112,7 @@ function setupEvents(): void {
       if (!target) return
 
       const ci = Number(target.dataset.ci)
-      const pi = Number(target.dataset.pi)
+      const qi = Number(target.dataset.qi)
 
       switch (target.dataset.action) {
         case 'toggle-accordion': {
@@ -1073,25 +1122,15 @@ function setupEvents(): void {
           break
         }
         case 'choose-image':
-          document.getElementById(`adm-img-file-${ci}-${pi}`)?.click()
+          document.getElementById(`adm-img-file-${ci}-${qi}`)?.click()
           break
         case 'clear-image': {
-          imgStaging[`${ci}-${pi}`] = ''
-          const preview = document.getElementById(`adm-img-preview-${ci}-${pi}`) as HTMLImageElement | null
+          imgStaging[`${ci}-${qi}`] = ''
+          const preview = document.getElementById(`adm-img-preview-${ci}-${qi}`) as HTMLImageElement | null
           if (preview) {
             preview.src = ''
             preview.style.display = 'none'
           }
-          target.style.display = 'none'
-          break
-        }
-        case 'choose-mp3':
-          document.getElementById(`adm-mp3-file-${ci}-${pi}`)?.click()
-          break
-        case 'clear-mp3': {
-          mp3Staging[`${ci}-${pi}`] = ''
-          const status = document.getElementById(`adm-mp3-status-${ci}-${pi}`)
-          if (status) status.textContent = 'No audio file yet'
           target.style.display = 'none'
           break
         }
@@ -1102,21 +1141,15 @@ function setupEvents(): void {
     { signal },
   )
 
-  // Admin modal file input changes (delegation)
   $('admin-modal').addEventListener(
     'change',
     (e) => {
       const target = e.target as HTMLInputElement
+      if (!target.classList.contains('admin-img-file')) return
       const ci = Number(target.dataset.ci)
-      const pi = Number(target.dataset.pi)
+      const qi = Number(target.dataset.qi)
       const file = target.files?.[0]
-      if (!file) return
-
-      if (target.classList.contains('admin-img-file')) {
-        handleAdminImgUpload(ci, pi, file)
-      } else if (target.classList.contains('admin-mp3-file')) {
-        handleAdminMp3Upload(ci, pi, file)
-      }
+      if (file) handleAdminImgUpload(ci, qi, file)
     },
     { signal },
   )
@@ -1130,29 +1163,61 @@ function setupEvents(): void {
     { signal },
   )
 
+  // Team setup modal delegation
+  $('btn-close-team-setup').addEventListener(
+    'click',
+    () => {
+      $('team-setup-overlay').style.display = 'none'
+    },
+    { signal },
+  )
+
+  $('team-setup-modal').addEventListener(
+    'click',
+    (e) => {
+      const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')
+      if (!target) return
+
+      switch (target.dataset.action) {
+        case 'ts-add-team': {
+          const teamsWrap = document.getElementById('ts-teams')
+          if (!teamsWrap || teamsWrap.children.length >= 6) break
+          teamsWrap.appendChild(buildTeamSetupRow(teamsWrap.children.length))
+          if (teamsWrap.children.length >= 6) target.style.display = 'none'
+          break
+        }
+        case 'ts-remove-team': {
+          const teamsWrap = document.getElementById('ts-teams')
+          if (!teamsWrap || teamsWrap.children.length <= 2) break
+          target.closest('.ts-team-row')?.remove()
+          const addBtn = document.getElementById('ts-add-btn')
+          if (addBtn) addBtn.style.display = ''
+          break
+        }
+        case 'ts-start-game':
+          startGame()
+          break
+        default:
+          break
+      }
+    },
+    { signal },
+  )
+
   // Scoreboard delegation
   $('scoreboard').addEventListener(
     'click',
     (e) => {
       const target = e.target as HTMLElement
 
-      // Add team
-      if (target.closest('[data-action="add-team"]')) {
-        addTeam()
-        return
-      }
-
-      // Score adjustment
       const scoreBtn = target.closest<HTMLElement>('[data-action="adjust-score"]')
       if (scoreBtn) {
         adjustScore(Number(scoreBtn.dataset.team), Number(scoreBtn.dataset.delta))
         return
       }
 
-      // Don't select team when clicking name input
       if (target.closest('.team-name')) return
 
-      // Select team
       const card = target.closest<HTMLElement>('[data-action="select-team"]')
       if (card) {
         selectedTeamIdx = Number(card.dataset.team)
@@ -1186,28 +1251,37 @@ function setupEvents(): void {
     (e) => {
       const target = e.target as HTMLElement
 
-      // Category name / edit icon
-      const catBtn = target.closest<HTMLElement>('[data-action="edit-category"]')
-      if (catBtn) {
-        editCategory(Number(catBtn.dataset.ci))
-        return
-      }
-
-      // Edit icon click (inside cat-header, but not the button itself)
-      if (target.closest('.cat-edit-icon')) {
-        const header = target.closest('.cat-header')
-        const nameBtn = header?.querySelector<HTMLElement>('[data-action="edit-category"]')
-        if (nameBtn) editCategory(Number(nameBtn.dataset.ci))
-        return
-      }
-
-      // Tile
-      const tile = target.closest<HTMLButtonElement>('[data-action="open-question"]')
-      if (tile && !tile.disabled) {
-        const ci = Number(tile.dataset.ci)
-        const pi = Number(tile.dataset.pi)
-        const pts = POINTS[pi]
-        if (pts !== undefined) openQuestion(ci, pi, pts)
+      if (data.mode === APP_MODE.edit) {
+        const catBtn = target.closest<HTMLElement>('[data-action="edit-category"]')
+        if (catBtn) {
+          editCategory(Number(catBtn.dataset.ci))
+          return
+        }
+        if (target.closest('.cat-edit-icon')) {
+          const header = target.closest('.cat-header')
+          const nameBtn = header?.querySelector<HTMLElement>('[data-action="edit-category"]')
+          if (nameBtn) editCategory(Number(nameBtn.dataset.ci))
+          return
+        }
+        const tile = target.closest<HTMLButtonElement>('[data-action="open-question"]')
+        if (tile) {
+          editCategory(Number(tile.dataset.ci))
+          return
+        }
+        const removeBtn = target.closest<HTMLElement>('[data-action="remove-category"]')
+        if (removeBtn) {
+          removeCategory(Number(removeBtn.dataset.ci))
+          return
+        }
+      } else {
+        const tile = target.closest<HTMLButtonElement>('[data-action="open-question"]')
+        if (tile && !tile.disabled) {
+          const ci = Number(tile.dataset.ci)
+          const qi = Number(tile.dataset.qi)
+          const cat = data.categories[ci]
+          const pts = cat?.points[qi]
+          if (pts !== undefined) openQuestion(ci, qi, pts)
+        }
       }
     },
     { signal },
@@ -1221,16 +1295,6 @@ function setupEvents(): void {
       if (!chip) return
       selectedTeamIdx = Number(chip.dataset.team)
       renderTeamSelector()
-    },
-    { signal },
-  )
-
-  // MP3 play button (dynamically created, delegate from modal)
-  $('q-modal').addEventListener(
-    'click',
-    (e) => {
-      const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action="toggle-mp3"]')
-      if (btn) toggleMp3()
     },
     { signal },
   )

@@ -2,8 +2,20 @@ import { openDB } from 'idb'
 
 // ── Types ──
 
-export const CATEGORY_KIND = { standard: 'standard', x2: 'x2', music: 'music' } as const
-export type CategoryKind = (typeof CATEGORY_KIND)[keyof typeof CATEGORY_KIND]
+export const CATEGORY_COLOR = {
+  blue: 'blue',
+  orange: 'orange',
+  purple: 'purple',
+  green: 'green',
+  red: 'red',
+  teal: 'teal',
+  pink: 'pink',
+  yellow: 'yellow',
+} as const
+export type CategoryColor = (typeof CATEGORY_COLOR)[keyof typeof CATEGORY_COLOR]
+
+export const APP_MODE = { edit: 'edit', play: 'play' } as const
+export type AppMode = (typeof APP_MODE)[keyof typeof APP_MODE]
 
 export type Question = {
   q: string
@@ -11,29 +23,13 @@ export type Question = {
   img?: string
 }
 
-export type MusicQuestion = Question & {
-  mp3: string
-}
-
-export type StandardCategory = {
-  kind: typeof CATEGORY_KIND.standard
+export type Category = {
+  id: string
   name: string
+  color: CategoryColor
+  points: number[]
   questions: Question[]
 }
-
-export type X2Category = {
-  kind: typeof CATEGORY_KIND.x2
-  name: string
-  questions: Question[]
-}
-
-export type MusicCategory = {
-  kind: typeof CATEGORY_KIND.music
-  name: string
-  questions: MusicQuestion[]
-}
-
-export type Category = StandardCategory | X2Category | MusicCategory
 
 export type Team = {
   name: string
@@ -41,6 +37,7 @@ export type Team = {
 }
 
 export type AppData = {
+  mode: AppMode
   categories: Category[]
   teams: Team[]
   used: Record<string, boolean>
@@ -67,17 +64,20 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-const VALID_KINDS = new Set<string>(Object.values(CATEGORY_KIND))
+const VALID_COLORS = new Set<string>(Object.values(CATEGORY_COLOR))
+const VALID_MODES = new Set<string>(Object.values(APP_MODE))
 
 function isAppData(value: unknown): value is AppData {
   if (!isRecord(value)) return false
+  if (typeof value.mode !== 'string' || !VALID_MODES.has(value.mode)) return false
   if (!Array.isArray(value.categories) || !Array.isArray(value.teams) || !isRecord(value.used)) return false
 
   for (const cat of value.categories) {
     if (!isRecord(cat)) return false
-    if (typeof cat.kind !== 'string' || !VALID_KINDS.has(cat.kind)) return false
+    if (typeof cat.id !== 'string') return false
     if (typeof cat.name !== 'string') return false
-    if (!Array.isArray(cat.questions)) return false
+    if (typeof cat.color !== 'string' || !VALID_COLORS.has(cat.color)) return false
+    if (!Array.isArray(cat.points) || !Array.isArray(cat.questions)) return false
     for (const q of cat.questions) {
       if (!isRecord(q)) return false
       if (typeof q.q !== 'string' || typeof q.a !== 'string') return false
