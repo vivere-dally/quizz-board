@@ -20,3 +20,7 @@ export function nextCorrectPreview(tilePts: number, currentStreak: number): numb
 export function streakBonusFor(streak: number): number {
   return 100 * (streak - 1)
 }
+
+export function scorePartial(tilePts: number, totalParts: number, correctParts: number): number {
+  return Math.floor(tilePts / totalParts) * correctParts
+}

@@ -1,7 +1,7 @@
 import './style.css'
 import { APP_MODE, PLAY_STYLE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, DEFAULT_QUESTION_TEXT, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
-import type { AppData, CategoryColor, Question, QuestionType, QuestionMedia, Team } from './persistence/db.ts'
-import { scoreCorrect, scoreWrong, nextCorrectPreview, streakBonusFor } from './lib/scoring.ts'
+import type { AppData, CategoryColor, Question, QuestionType, QuestionMedia, MultiPartMediaPart, OrderingItem, Team } from './persistence/db.ts'
+import { scoreCorrect, scoreWrong, nextCorrectPreview, streakBonusFor, scorePartial } from './lib/scoring.ts'
 
 type ActiveQ = {
   catIdx: number
@@ -31,6 +31,7 @@ const data: AppData = {
 }
 
 let activeQ: ActiveQ | null = null
+let activeEditCell: { ci: number; qi: number } | null = null
 const mediaStaging: Record<string, QuestionMedia | null> = {}
 
 // ── Persistence ──
@@ -372,6 +373,8 @@ function renderBoard(): void {
     const col = document.createElement('div')
     col.className = 'board-column'
     col.dataset.color = cat.color
+    col.dataset.ci = String(ci)
+    if (isEdit) col.draggable = true
 
     const header = cloneTemplate('tmpl-cat-header')
     const catName = header.querySelector('.cat-name') as HTMLButtonElement
@@ -379,6 +382,11 @@ function renderBoard(): void {
     catName.dataset.ci = String(ci)
 
     if (isEdit) {
+      const dragHandle = document.createElement('span')
+      dragHandle.className = 'cat-drag-handle'
+      dragHandle.textContent = '⠿'
+      header.insertBefore(dragHandle, header.firstChild)
+
       const editIcon = document.createElement('span')
       editIcon.className = 'cat-edit-icon'
       editIcon.textContent = '✎'
@@ -512,6 +520,7 @@ function renderPlayTypeContent(q: Question, container: HTMLElement): void {
         const card = document.createElement('div')
         card.className = 'play-mc-option'
         card.dataset.idx = String(i)
+        card.dataset.action = 'mc-select'
         const letter = document.createElement('span')
         letter.className = 'play-mc-letter'
         letter.textContent = String.fromCharCode(65 + i)
@@ -539,15 +548,34 @@ function renderPlayTypeContent(q: Question, container: HTMLElement): void {
       const shuffled = shuffle(q.items)
       const list = document.createElement('div')
       list.className = 'play-ord-items'
-      list.dataset.correctOrder = JSON.stringify(q.items)
-      for (const [i, item] of shuffled.entries()) {
+      list.dataset.correctOrder = JSON.stringify(q.items.map((it) => it.label))
+      for (const [i, ordItem] of shuffled.entries()) {
         const card = document.createElement('div')
         card.className = 'play-ord-item'
         const num = document.createElement('span')
         num.className = 'play-ord-num'
         num.textContent = `${i + 1}.`
         card.appendChild(num)
-        card.appendChild(document.createTextNode(item))
+
+        if (ordItem.media?.type === MEDIA_TYPE.image) {
+          const img = document.createElement('img')
+          img.src = ordItem.media.src
+          img.alt = ordItem.label
+          img.className = 'play-ord-item-img'
+          card.appendChild(img)
+        } else if (ordItem.media?.type === MEDIA_TYPE.youtube) {
+          const ytBtn = document.createElement('button')
+          ytBtn.type = 'button'
+          ytBtn.className = 'yt-play-btn play-ord-yt-btn'
+          ytBtn.textContent = '🔊'
+          ytBtn.dataset.action = 'ord-yt-play'
+          ytBtn.dataset.videoId = ordItem.media.videoId
+          if (ordItem.media.startSeconds !== undefined) ytBtn.dataset.start = String(ordItem.media.startSeconds)
+          if (ordItem.media.endSeconds !== undefined) ytBtn.dataset.end = String(ordItem.media.endSeconds)
+          card.appendChild(ytBtn)
+        }
+
+        card.appendChild(document.createTextNode(ordItem.label))
         list.appendChild(card)
       }
       container.appendChild(list)
@@ -558,6 +586,43 @@ function renderPlayTypeContent(q: Question, container: HTMLElement): void {
       prompt.className = 'play-numeric-prompt'
       prompt.textContent = q.unit ? `Answer in ${q.unit}` : 'Enter a number'
       container.appendChild(prompt)
+      break
+    }
+    case QUESTION_TYPE.multiPartMedia: {
+      const grid = document.createElement('div')
+      grid.className = 'play-mpm-grid'
+      for (const [i, part] of q.parts.entries()) {
+        const card = document.createElement('div')
+        card.className = 'play-mpm-card'
+        card.dataset.partIdx = String(i)
+
+        if (part.media.type === MEDIA_TYPE.image) {
+          const img = document.createElement('img')
+          img.src = part.media.src
+          img.alt = `Part ${i + 1}`
+          img.className = 'play-mpm-img'
+          card.appendChild(img)
+        } else if (part.media.type === MEDIA_TYPE.youtube) {
+          const ytBtn = document.createElement('button')
+          ytBtn.type = 'button'
+          ytBtn.className = 'yt-play-btn play-mpm-yt-btn'
+          ytBtn.textContent = '🔊'
+          ytBtn.dataset.action = 'mpm-yt-play'
+          ytBtn.dataset.partIdx = String(i)
+          ytBtn.dataset.videoId = part.media.videoId
+          if (part.media.startSeconds !== undefined) ytBtn.dataset.start = String(part.media.startSeconds)
+          if (part.media.endSeconds !== undefined) ytBtn.dataset.end = String(part.media.endSeconds)
+          card.appendChild(ytBtn)
+        }
+
+        const partLabel = document.createElement('div')
+        partLabel.className = 'play-mpm-label'
+        partLabel.textContent = `Part ${i + 1}`
+        card.appendChild(partLabel)
+
+        grid.appendChild(card)
+      }
+      container.appendChild(grid)
       break
     }
     default: {
@@ -573,12 +638,24 @@ function revealPlayTypeContent(q: Question, container: HTMLElement): void {
       break
     case QUESTION_TYPE.multipleChoice: {
       const options = container.querySelectorAll<HTMLElement>('.play-mc-option')
+      const selectedOpt = container.querySelector<HTMLElement>('.play-mc-option.selected')
+      const selectedIdx = selectedOpt ? Number(selectedOpt.dataset.idx) : null
+
       for (const opt of options) {
         const idx = Number(opt.dataset.idx)
         if (idx === q.correctIndex) {
           opt.classList.add('correct')
         } else {
           opt.classList.add('dimmed')
+        }
+      }
+
+      if (selectedOpt && selectedIdx !== null) {
+        if (selectedIdx === q.correctIndex) {
+          selectedOpt.classList.add('selected-correct')
+        } else {
+          selectedOpt.classList.remove('dimmed')
+          selectedOpt.classList.add('selected-wrong')
         }
       }
       break
@@ -599,20 +676,52 @@ function revealPlayTypeContent(q: Question, container: HTMLElement): void {
       const list = container.querySelector('.play-ord-items')
       if (!list) break
       list.textContent = ''
-      for (const [i, item] of q.items.entries()) {
+      for (const [i, ordItem] of q.items.entries()) {
         const card = document.createElement('div')
         card.className = 'play-ord-item correct'
         const num = document.createElement('span')
         num.className = 'play-ord-num'
         num.textContent = `${i + 1}.`
         card.appendChild(num)
-        card.appendChild(document.createTextNode(item))
+
+        if (ordItem.media?.type === MEDIA_TYPE.image) {
+          const img = document.createElement('img')
+          img.src = ordItem.media.src
+          img.alt = ordItem.label
+          img.className = 'play-ord-item-img'
+          card.appendChild(img)
+        } else if (ordItem.media?.type === MEDIA_TYPE.youtube) {
+          const ytBtn = document.createElement('button')
+          ytBtn.type = 'button'
+          ytBtn.className = 'yt-play-btn play-ord-yt-btn'
+          ytBtn.textContent = '🔊'
+          ytBtn.dataset.action = 'ord-yt-play'
+          ytBtn.dataset.videoId = ordItem.media.videoId
+          if (ordItem.media.startSeconds !== undefined) ytBtn.dataset.start = String(ordItem.media.startSeconds)
+          if (ordItem.media.endSeconds !== undefined) ytBtn.dataset.end = String(ordItem.media.endSeconds)
+          card.appendChild(ytBtn)
+        }
+
+        card.appendChild(document.createTextNode(ordItem.label))
         list.appendChild(card)
       }
       break
     }
     case QUESTION_TYPE.numeric:
       break
+    case QUESTION_TYPE.multiPartMedia: {
+      const cards = container.querySelectorAll<HTMLElement>('.play-mpm-card')
+      for (const card of cards) {
+        const idx = Number(card.dataset.partIdx)
+        const part = q.parts[idx]
+        if (!part) continue
+        const answerEl = document.createElement('div')
+        answerEl.className = 'play-mpm-answer'
+        answerEl.textContent = part.answer
+        card.appendChild(answerEl)
+      }
+      break
+    }
     default: {
       const _exhaustive: never = q
       throw new Error(`unreachable: unknown question type ${(_exhaustive as Question).type}`)
@@ -680,16 +789,88 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
 }
 
 function revealAnswer(): void {
+  let isMpm = false
   if (activeQ) {
     const cat = data.categories[activeQ.catIdx]
     const q = cat?.questions[activeQ.qIdx]
-    if (q) revealPlayTypeContent(q, $('m-type-content'))
+    if (q) {
+      revealPlayTypeContent(q, $('m-type-content'))
+      isMpm = q.type === QUESTION_TYPE.multiPartMedia
+    }
   }
 
   $('m-answer').style.display = 'block'
   $('btn-reveal').style.display = 'none'
-  $('btn-correct').style.display = 'inline-flex'
-  $('btn-wrong').style.display = 'inline-flex'
+
+  if (isMpm && activeQ) {
+    const cat = data.categories[activeQ.catIdx]
+    const q = cat?.questions[activeQ.qIdx]
+    if (q?.type === QUESTION_TYPE.multiPartMedia) {
+      $('btn-correct').style.display = 'none'
+      $('btn-wrong').style.display = 'none'
+      renderMpmScoring(q, activeQ.pts)
+    }
+  } else {
+    $('btn-correct').style.display = 'inline-flex'
+    $('btn-wrong').style.display = 'inline-flex'
+
+    if (activeQ) {
+      const cat = data.categories[activeQ.catIdx]
+      const q = cat?.questions[activeQ.qIdx]
+      if (q?.type === QUESTION_TYPE.multipleChoice) {
+        const selected = $('m-type-content').querySelector<HTMLElement>('.play-mc-option.selected')
+        if (selected) {
+          const selectedIdx = Number(selected.dataset.idx)
+          if (selectedIdx === q.correctIndex) {
+            $('btn-correct').classList.add('auto-suggested')
+          } else {
+            $('btn-wrong').classList.add('auto-suggested')
+          }
+        }
+      }
+    }
+  }
+}
+
+function renderMpmScoring(q: { parts: MultiPartMediaPart[] }, pts: number): void {
+  const existing = document.getElementById('mpm-scoring-container')
+  if (existing) existing.remove()
+
+  const container = document.createElement('div')
+  container.id = 'mpm-scoring-container'
+  container.className = 'mpm-scoring'
+
+  for (const [i, part] of q.parts.entries()) {
+    const row = document.createElement('label')
+    row.className = 'mpm-score-row'
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.dataset.partIdx = String(i)
+    row.appendChild(cb)
+    row.appendChild(document.createTextNode(`Part ${i + 1}: ${part.answer}`))
+    container.appendChild(row)
+  }
+
+  const totalEl = document.createElement('div')
+  totalEl.className = 'mpm-score-total'
+  const perPart = Math.floor(pts / q.parts.length)
+  totalEl.textContent = `Score: 0 / ${pts} pts (${perPart} per part)`
+  container.appendChild(totalEl)
+
+  container.addEventListener('change', () => {
+    const checked = container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked').length
+    totalEl.textContent = `Score: ${perPart * checked} / ${pts} pts (${perPart} per part)`
+  })
+
+  const submitBtn = document.createElement('button')
+  submitBtn.type = 'button'
+  submitBtn.className = 'modal-btn btn-correct'
+  submitBtn.textContent = '✓ Submit Score'
+  submitBtn.dataset.action = 'mpm-submit-score'
+  container.appendChild(submitBtn)
+
+  const typeContent = $('m-type-content')
+  typeContent.appendChild(container)
 }
 
 function markResult(correct: boolean): void {
@@ -817,6 +998,7 @@ function saveCategoryEdit(ci: number): void {
 }
 
 function closeEditModal(): void {
+  activeEditCell = null
   $('edit-overlay').style.display = 'none'
 }
 
@@ -828,6 +1010,7 @@ const TYPE_LABELS: Record<QuestionType, string> = {
   [QUESTION_TYPE.trueFalse]: 'True / False',
   [QUESTION_TYPE.ordering]: 'Ordering',
   [QUESTION_TYPE.numeric]: 'Numeric',
+  [QUESTION_TYPE.multiPartMedia]: 'Multi-Part Media',
 }
 
 function renderAnswerFields(container: HTMLElement, question: Question): void {
@@ -907,8 +1090,8 @@ function renderAnswerFields(container: HTMLElement, question: Question): void {
       list.id = 'cell-ord-items'
       list.className = 'ord-items-list'
 
-      for (const [i, item] of question.items.entries()) {
-        list.appendChild(buildOrderingItemRow(i, item, question.items.length))
+      for (const [i, ordItem] of question.items.entries()) {
+        list.appendChild(buildOrderingItemRow(i, ordItem, question.items.length))
       }
       container.appendChild(list)
 
@@ -944,6 +1127,28 @@ function renderAnswerFields(container: HTMLElement, question: Question): void {
       unitInput.value = question.unit ?? ''
       unitInput.placeholder = 'e.g. km, years, meters'
       container.appendChild(unitInput)
+      break
+    }
+    case QUESTION_TYPE.multiPartMedia: {
+      const label = document.createElement('div')
+      label.className = 'field-label'
+      label.textContent = 'Parts (each needs media + answer)'
+      container.appendChild(label)
+
+      const list = document.createElement('div')
+      list.id = 'cell-mpm-parts'
+      list.className = 'mpm-parts-list'
+      for (const [i, part] of question.parts.entries()) {
+        list.appendChild(buildMultiPartMediaRow(i, part, question.parts.length))
+      }
+      container.appendChild(list)
+
+      const addBtn = document.createElement('button')
+      addBtn.type = 'button'
+      addBtn.className = 'edit-add-btn'
+      addBtn.textContent = '+ Add Part'
+      addBtn.dataset.action = 'mpm-add-part'
+      container.appendChild(addBtn)
       break
     }
     default: {
@@ -985,20 +1190,34 @@ function buildMcOptionRow(index: number, value: string, checked: boolean): HTMLE
   return row
 }
 
-function buildOrderingItemRow(index: number, value: string, total: number): HTMLElement {
+function buildOrderingItemRow(index: number, item: OrderingItem, total: number): HTMLElement {
   const row = document.createElement('div')
   row.className = 'ord-item-row'
+  if (item.media) row.classList.add('has-media')
+
+  // Top bar: number, input, media toggle, move buttons, remove
+  const topBar = document.createElement('div')
+  topBar.className = 'ord-item-top'
 
   const num = document.createElement('span')
   num.className = 'ord-item-num'
   num.textContent = `${index + 1}.`
-  row.appendChild(num)
+  topBar.appendChild(num)
 
   const input = document.createElement('input')
   input.className = 'edit-input ord-item-input'
-  input.value = value
+  input.value = item.label
   input.placeholder = `Item ${index + 1}`
-  row.appendChild(input)
+  topBar.appendChild(input)
+
+  const mediaToggle = document.createElement('button')
+  mediaToggle.type = 'button'
+  mediaToggle.className = 'ord-media-toggle'
+  mediaToggle.textContent = item.media ? '♫' : '♪'
+  mediaToggle.title = 'Toggle media attachment'
+  mediaToggle.dataset.action = 'ord-toggle-media'
+  if (item.media) mediaToggle.classList.add('active')
+  topBar.appendChild(mediaToggle)
 
   const btnGroup = document.createElement('span')
   btnGroup.className = 'ord-btn-group'
@@ -1019,16 +1238,372 @@ function buildOrderingItemRow(index: number, value: string, total: number): HTML
   if (index === total - 1) downBtn.disabled = true
   btnGroup.appendChild(downBtn)
 
-  row.appendChild(btnGroup)
+  topBar.appendChild(btnGroup)
 
   const removeBtn = document.createElement('button')
   removeBtn.type = 'button'
   removeBtn.className = 'ec-remove-btn'
   removeBtn.textContent = '✕'
   removeBtn.dataset.action = 'ord-remove-item'
-  row.appendChild(removeBtn)
+  topBar.appendChild(removeBtn)
+
+  row.appendChild(topBar)
+
+  // Media section (stacks below the top bar)
+  const mediaSec = document.createElement('div')
+  mediaSec.className = 'ord-item-media'
+  mediaSec.style.display = item.media ? '' : 'none'
+
+  const mediaTypeSelect = document.createElement('select')
+  mediaTypeSelect.className = 'edit-input ord-media-type'
+  for (const [value, label] of [['none', 'None'], ['image', 'Image'], ['youtube', 'YouTube']] as const) {
+    const opt = document.createElement('option')
+    opt.value = value
+    opt.textContent = label
+    if (item.media?.type === value) opt.selected = true
+    if (!item.media && value === 'none') opt.selected = true
+    mediaTypeSelect.appendChild(opt)
+  }
+  mediaSec.appendChild(mediaTypeSelect)
+
+  // Image sub
+  const imgSub = document.createElement('div')
+  imgSub.className = 'ord-img-section'
+  imgSub.style.display = item.media?.type === MEDIA_TYPE.image ? '' : 'none'
+
+  const imgUrl = document.createElement('input')
+  imgUrl.type = 'url'
+  imgUrl.className = 'edit-input ord-img-url'
+  imgUrl.placeholder = 'Image URL...'
+  if (item.media?.type === MEDIA_TYPE.image && item.media.src.startsWith('http')) {
+    imgUrl.value = item.media.src
+  }
+  imgSub.appendChild(imgUrl)
+
+  const imgPreview = document.createElement('img')
+  imgPreview.className = 'img-preview-thumb ord-img-preview'
+  imgPreview.alt = 'Item image'
+  if (item.media?.type === MEDIA_TYPE.image && item.media.src) {
+    imgPreview.src = item.media.src
+    imgPreview.style.display = 'block'
+  } else {
+    imgPreview.style.display = 'none'
+  }
+  imgSub.appendChild(imgPreview)
+  mediaSec.appendChild(imgSub)
+
+  // YouTube sub
+  const ytSub = document.createElement('div')
+  ytSub.className = 'ord-yt-section'
+  ytSub.style.display = item.media?.type === MEDIA_TYPE.youtube ? '' : 'none'
+
+  const ytUrl = document.createElement('input')
+  ytUrl.type = 'url'
+  ytUrl.className = 'edit-input ord-yt-url'
+  ytUrl.placeholder = 'YouTube URL...'
+  if (item.media?.type === MEDIA_TYPE.youtube) {
+    ytUrl.value = `https://www.youtube.com/watch?v=${item.media.videoId}`
+  }
+  ytSub.appendChild(ytUrl)
+
+  const ytThumb = document.createElement('img')
+  ytThumb.className = 'media-yt-thumb ord-yt-thumb'
+  ytThumb.alt = 'YouTube thumbnail'
+  if (item.media?.type === MEDIA_TYPE.youtube) {
+    ytThumb.src = `https://img.youtube.com/vi/${item.media.videoId}/hqdefault.jpg`
+    ytThumb.style.display = 'block'
+  } else {
+    ytThumb.style.display = 'none'
+  }
+  ytSub.appendChild(ytThumb)
+
+  const timeRow = document.createElement('div')
+  timeRow.className = 'media-time-row'
+  const startLabel = document.createElement('label')
+  startLabel.textContent = 'Start'
+  timeRow.appendChild(startLabel)
+  const startInput = document.createElement('input')
+  startInput.type = 'number'
+  startInput.className = 'edit-input ord-yt-start'
+  startInput.min = '0'
+  startInput.placeholder = '0'
+  if (item.media?.type === MEDIA_TYPE.youtube && item.media.startSeconds !== undefined) {
+    startInput.value = String(item.media.startSeconds)
+  }
+  timeRow.appendChild(startInput)
+  const endLabel = document.createElement('label')
+  endLabel.textContent = 'End'
+  timeRow.appendChild(endLabel)
+  const endInput = document.createElement('input')
+  endInput.type = 'number'
+  endInput.className = 'edit-input ord-yt-end'
+  endInput.min = '0'
+  endInput.placeholder = ''
+  if (item.media?.type === MEDIA_TYPE.youtube && item.media.endSeconds !== undefined) {
+    endInput.value = String(item.media.endSeconds)
+  }
+  timeRow.appendChild(endInput)
+  ytSub.appendChild(timeRow)
+  mediaSec.appendChild(ytSub)
+
+  row.appendChild(mediaSec)
 
   return row
+}
+
+function buildMultiPartMediaRow(index: number, part: MultiPartMediaPart, total: number): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'mpm-part-row'
+  row.dataset.partIdx = String(index)
+
+  const header = document.createElement('div')
+  header.className = 'mpm-part-header'
+  const num = document.createElement('span')
+  num.className = 'mpm-part-num'
+  num.textContent = `Part ${index + 1}`
+  header.appendChild(num)
+
+  const removeBtn = document.createElement('button')
+  removeBtn.type = 'button'
+  removeBtn.className = 'ec-remove-btn'
+  removeBtn.textContent = '✕'
+  removeBtn.dataset.action = 'mpm-remove-part'
+  if (total <= 1) removeBtn.style.display = 'none'
+  header.appendChild(removeBtn)
+  row.appendChild(header)
+
+  const mediaTypeSelect = document.createElement('select')
+  mediaTypeSelect.className = 'edit-input mpm-media-type'
+  for (const [value, label] of [['image', 'Image'], ['youtube', 'YouTube']] as const) {
+    const opt = document.createElement('option')
+    opt.value = value
+    opt.textContent = label
+    if (part.media.type === value) opt.selected = true
+    mediaTypeSelect.appendChild(opt)
+  }
+  row.appendChild(mediaTypeSelect)
+
+  // Image subsection
+  const imgSec = document.createElement('div')
+  imgSec.className = 'mpm-img-section'
+  imgSec.style.display = part.media.type === MEDIA_TYPE.image ? '' : 'none'
+
+  const imgUrlInput = document.createElement('input')
+  imgUrlInput.type = 'url'
+  imgUrlInput.className = 'edit-input mpm-img-url'
+  imgUrlInput.placeholder = 'Paste image URL...'
+  if (part.media.type === MEDIA_TYPE.image && part.media.src.startsWith('http')) {
+    imgUrlInput.value = part.media.src
+  }
+  imgSec.appendChild(imgUrlInput)
+
+  const imgUrlError = document.createElement('div')
+  imgUrlError.className = 'media-error mpm-img-url-error'
+  imgSec.appendChild(imgUrlError)
+
+  const orText = document.createElement('div')
+  orText.className = 'media-or'
+  orText.textContent = 'or'
+  imgSec.appendChild(orText)
+
+  const imgBtnRow = document.createElement('div')
+  imgBtnRow.style.cssText = 'display:flex;gap:8px;align-items:center'
+
+  const chooseBtn = document.createElement('button')
+  chooseBtn.type = 'button'
+  chooseBtn.className = 'img-file-btn'
+  chooseBtn.textContent = 'Choose Image'
+  chooseBtn.dataset.action = 'mpm-choose-image'
+  imgBtnRow.appendChild(chooseBtn)
+
+  const clearBtn = document.createElement('button')
+  clearBtn.type = 'button'
+  clearBtn.className = 'img-clear-btn mpm-img-clear'
+  clearBtn.textContent = 'Remove'
+  clearBtn.dataset.action = 'mpm-clear-image'
+  clearBtn.style.display = part.media.type === MEDIA_TYPE.image && part.media.src ? 'inline-block' : 'none'
+  imgBtnRow.appendChild(clearBtn)
+  imgSec.appendChild(imgBtnRow)
+
+  const preview = document.createElement('img')
+  preview.className = 'img-preview-thumb mpm-img-preview'
+  preview.alt = 'Part image preview'
+  if (part.media.type === MEDIA_TYPE.image && part.media.src) {
+    preview.src = part.media.src
+    preview.style.display = 'block'
+  } else {
+    preview.style.display = 'none'
+  }
+  imgSec.appendChild(preview)
+
+  const fileInput = document.createElement('input')
+  fileInput.type = 'file'
+  fileInput.accept = 'image/*'
+  fileInput.className = 'mpm-img-file'
+  fileInput.style.display = 'none'
+  imgSec.appendChild(fileInput)
+
+  row.appendChild(imgSec)
+
+  // YouTube subsection
+  const ytSec = document.createElement('div')
+  ytSec.className = 'mpm-yt-section'
+  ytSec.style.display = part.media.type === MEDIA_TYPE.youtube ? '' : 'none'
+
+  const ytUrlInput = document.createElement('input')
+  ytUrlInput.type = 'url'
+  ytUrlInput.className = 'edit-input mpm-yt-url'
+  ytUrlInput.placeholder = 'Paste YouTube URL...'
+  if (part.media.type === MEDIA_TYPE.youtube) {
+    ytUrlInput.value = `https://www.youtube.com/watch?v=${part.media.videoId}`
+  }
+  ytSec.appendChild(ytUrlInput)
+
+  const ytError = document.createElement('div')
+  ytError.className = 'media-error mpm-yt-error'
+  ytSec.appendChild(ytError)
+
+  const ytThumb = document.createElement('img')
+  ytThumb.className = 'media-yt-thumb mpm-yt-thumb'
+  ytThumb.alt = 'YouTube thumbnail'
+  if (part.media.type === MEDIA_TYPE.youtube) {
+    ytThumb.src = `https://img.youtube.com/vi/${part.media.videoId}/hqdefault.jpg`
+    ytThumb.style.display = 'block'
+  } else {
+    ytThumb.style.display = 'none'
+  }
+  ytSec.appendChild(ytThumb)
+
+  const timeRow = document.createElement('div')
+  timeRow.className = 'media-time-row'
+
+  const startLabel = document.createElement('label')
+  startLabel.textContent = 'Start (sec)'
+  timeRow.appendChild(startLabel)
+
+  const startInput = document.createElement('input')
+  startInput.type = 'number'
+  startInput.className = 'edit-input mpm-yt-start'
+  startInput.min = '0'
+  startInput.placeholder = '0'
+  if (part.media.type === MEDIA_TYPE.youtube && part.media.startSeconds !== undefined) {
+    startInput.value = String(part.media.startSeconds)
+  }
+  timeRow.appendChild(startInput)
+
+  const endLabel = document.createElement('label')
+  endLabel.textContent = 'End (sec)'
+  timeRow.appendChild(endLabel)
+
+  const endInput = document.createElement('input')
+  endInput.type = 'number'
+  endInput.className = 'edit-input mpm-yt-end'
+  endInput.min = '0'
+  endInput.placeholder = ''
+  if (part.media.type === MEDIA_TYPE.youtube && part.media.endSeconds !== undefined) {
+    endInput.value = String(part.media.endSeconds)
+  }
+  timeRow.appendChild(endInput)
+
+  ytSec.appendChild(timeRow)
+  row.appendChild(ytSec)
+
+  // Answer input
+  const ansLabel = document.createElement('div')
+  ansLabel.className = 'field-label'
+  ansLabel.textContent = 'Answer'
+  row.appendChild(ansLabel)
+
+  const ansInput = document.createElement('input')
+  ansInput.className = 'edit-input mpm-answer-input'
+  ansInput.value = part.answer
+  ansInput.placeholder = 'Correct answer for this part'
+  row.appendChild(ansInput)
+
+  return row
+}
+
+function rebuildMpmPartNumbers(list: HTMLElement): void {
+  const rows = list.querySelectorAll('.mpm-part-row')
+  const total = rows.length
+  for (const [i, row] of [...rows].entries()) {
+    (row as HTMLElement).dataset.partIdx = String(i)
+    const num = row.querySelector('.mpm-part-num')
+    if (num) num.textContent = `Part ${i + 1}`
+    const removeBtn = row.querySelector<HTMLElement>('[data-action="mpm-remove-part"]')
+    if (removeBtn) removeBtn.style.display = total <= 1 ? 'none' : ''
+  }
+}
+
+function readPartMedia(row: HTMLElement): QuestionMedia {
+  const typeSelect = row.querySelector('.mpm-media-type') as HTMLSelectElement | null
+  const mediaType = typeSelect?.value ?? 'image'
+
+  if (mediaType === 'youtube') {
+    const urlInput = row.querySelector('.mpm-yt-url') as HTMLInputElement | null
+    const parsed = urlInput?.value ? parseYoutubeUrl(urlInput.value) : undefined
+    if (parsed) {
+      const startEl = row.querySelector('.mpm-yt-start') as HTMLInputElement | null
+      const endEl = row.querySelector('.mpm-yt-end') as HTMLInputElement | null
+      const startVal = startEl?.value ? Number(startEl.value) : undefined
+      const endVal = endEl?.value ? Number(endEl.value) : undefined
+      const result: QuestionMedia = { type: MEDIA_TYPE.youtube, videoId: parsed.videoId }
+      if (startVal !== undefined && Number.isFinite(startVal)) result.startSeconds = startVal
+      if (endVal !== undefined && Number.isFinite(endVal)) result.endSeconds = endVal
+      return result
+    }
+  }
+
+  // Check for staged file upload
+  const partIdx = row.dataset.partIdx
+  const stagingKey = mpmStagingKey(partIdx ?? '0')
+  const staged = mediaStaging[stagingKey]
+  if (staged && staged.type === MEDIA_TYPE.image) return staged
+
+  const urlInput = row.querySelector('.mpm-img-url') as HTMLInputElement | null
+  const urlVal = urlInput?.value.trim()
+  if (urlVal) return { type: MEDIA_TYPE.image, src: urlVal }
+
+  // Fallback: preview src (may be from a prior load)
+  const preview = row.querySelector('.mpm-img-preview') as HTMLImageElement | null
+  if (preview?.src && preview.style.display !== 'none') return { type: MEDIA_TYPE.image, src: preview.src }
+
+  return { type: MEDIA_TYPE.image, src: '' }
+}
+
+function readOrderingItemMedia(row: HTMLElement): QuestionMedia | undefined {
+  const typeSelect = row.querySelector('.ord-media-type') as HTMLSelectElement | null
+  if (!typeSelect || typeSelect.value === 'none') return undefined
+
+  if (typeSelect.value === 'youtube') {
+    const urlInput = row.querySelector('.ord-yt-url') as HTMLInputElement | null
+    const parsed = urlInput?.value ? parseYoutubeUrl(urlInput.value) : undefined
+    if (parsed) {
+      const startEl = row.querySelector('.ord-yt-start') as HTMLInputElement | null
+      const endEl = row.querySelector('.ord-yt-end') as HTMLInputElement | null
+      const startVal = startEl?.value ? Number(startEl.value) : undefined
+      const endVal = endEl?.value ? Number(endEl.value) : undefined
+      const result: QuestionMedia = { type: MEDIA_TYPE.youtube, videoId: parsed.videoId }
+      if (startVal !== undefined && Number.isFinite(startVal)) result.startSeconds = startVal
+      if (endVal !== undefined && Number.isFinite(endVal)) result.endSeconds = endVal
+      return result
+    }
+    return undefined
+  }
+
+  const urlInput = row.querySelector('.ord-img-url') as HTMLInputElement | null
+  const urlVal = urlInput?.value.trim()
+  if (urlVal) return { type: MEDIA_TYPE.image, src: urlVal }
+
+  const preview = row.querySelector('.ord-img-preview') as HTMLImageElement | null
+  if (preview?.src && preview.style.display !== 'none') return { type: MEDIA_TYPE.image, src: preview.src }
+
+  return undefined
+}
+
+function mpmStagingKey(partIdx: string): string {
+  if (!activeEditCell) return `mpm-${partIdx}`
+  return `${activeEditCell.ci}-${activeEditCell.qi}-part-${partIdx}`
 }
 
 function readQuestionFromDOM(currentType: QuestionType): Question {
@@ -1057,10 +1632,14 @@ function readQuestionFromDOM(currentType: QuestionType): Question {
     }
     case QUESTION_TYPE.ordering: {
       const rows = document.querySelectorAll('#cell-ord-items .ord-item-row')
-      const items: string[] = []
+      const items: OrderingItem[] = []
       for (const row of rows) {
         const input = row.querySelector('.ord-item-input') as HTMLInputElement | null
-        items.push(input?.value ?? '')
+        const label = input?.value ?? ''
+        const media = readOrderingItemMedia(row as HTMLElement)
+        const ordItem: OrderingItem = { label }
+        if (media) ordItem.media = media
+        items.push(ordItem)
       }
       return { type: QUESTION_TYPE.ordering, q, items }
     }
@@ -1070,6 +1649,19 @@ function readQuestionFromDOM(currentType: QuestionType): Question {
       const result: Question = { type: QUESTION_TYPE.numeric, q, correctValue: val }
       if (unit) (result as { unit: string }).unit = unit
       return result
+    }
+    case QUESTION_TYPE.multiPartMedia: {
+      const rows = document.querySelectorAll('#cell-mpm-parts .mpm-part-row')
+      const parts: MultiPartMediaPart[] = []
+      for (const row of rows) {
+        const answer = (row.querySelector('.mpm-answer-input') as HTMLInputElement | null)?.value ?? ''
+        const media = readPartMedia(row as HTMLElement)
+        parts.push({ media, answer })
+      }
+      if (parts.length === 0) {
+        parts.push({ media: { type: MEDIA_TYPE.image, src: '' }, answer: '' })
+      }
+      return { type: QUESTION_TYPE.multiPartMedia, q, parts }
     }
     default: {
       const _exhaustive: never = currentType
@@ -1089,9 +1681,13 @@ function convertQuestion(from: Question, toType: QuestionType): Question {
     case QUESTION_TYPE.trueFalse:
       return { ...base, type: QUESTION_TYPE.trueFalse, correctAnswer: true }
     case QUESTION_TYPE.ordering:
-      return { ...base, type: QUESTION_TYPE.ordering, items: ['', ''] }
+      return { ...base, type: QUESTION_TYPE.ordering, items: [{ label: '' }, { label: '' }] }
     case QUESTION_TYPE.numeric:
       return { ...base, type: QUESTION_TYPE.numeric, correctValue: 0 }
+    case QUESTION_TYPE.multiPartMedia: {
+      const defaultMedia: QuestionMedia = base.media ?? { type: MEDIA_TYPE.image, src: '' }
+      return { ...base, type: QUESTION_TYPE.multiPartMedia, parts: [{ media: defaultMedia, answer: '' }] }
+    }
     default: {
       const _exhaustive: never = toType
       throw new Error(`unreachable: unknown question type ${_exhaustive}`)
@@ -1178,6 +1774,7 @@ function editCell(ci: number, qi: number): void {
   x2Label.appendChild(document.createTextNode('×2 Multiplier'))
   content.appendChild(x2Label)
 
+  activeEditCell = { ci, qi }
   editingQuestionType = question.type
 
   const typeLabel = document.createElement('div')
@@ -1213,10 +1810,14 @@ function editCell(ci: number, qi: number): void {
   renderAnswerFields(answerContainer, question)
   content.appendChild(answerContainer)
 
+  const mediaWrap = document.createElement('div')
+  mediaWrap.id = 'cell-media-wrap'
+  if (question.type === QUESTION_TYPE.multiPartMedia) mediaWrap.style.display = 'none'
+
   const mediaLabel = document.createElement('div')
   mediaLabel.className = 'field-label'
   mediaLabel.textContent = 'Media (optional)'
-  content.appendChild(mediaLabel)
+  mediaWrap.appendChild(mediaLabel)
 
   const mediaTypeSelect = document.createElement('select')
   mediaTypeSelect.className = 'edit-input'
@@ -1228,7 +1829,7 @@ function editCell(ci: number, qi: number): void {
     if (question.media?.type === value || (!question.media && value === 'none')) opt.selected = true
     mediaTypeSelect.appendChild(opt)
   }
-  content.appendChild(mediaTypeSelect)
+  mediaWrap.appendChild(mediaTypeSelect)
 
   const mediaSection = document.createElement('div')
   mediaSection.className = 'media-section'
@@ -1373,7 +1974,8 @@ function editCell(ci: number, qi: number): void {
 
   ytSection.appendChild(timeRow)
   mediaSection.appendChild(ytSection)
-  content.appendChild(mediaSection)
+  mediaWrap.appendChild(mediaSection)
+  content.appendChild(mediaWrap)
 
   const actions = document.createElement('div')
   actions.className = 'cell-editor-actions'
@@ -1454,13 +2056,16 @@ function saveCellEdit(ci: number, qi: number): void {
   const x2El = document.getElementById('cell-x2') as HTMLInputElement | null
   if (x2El?.checked) newQ.x2 = true
 
-  const oldQ = cat.questions[qi]
-  const media = readMediaFromEditForm(ci, qi, oldQ?.media)
-  if (media) {
-    newQ.media = media
+  if (editingQuestionType !== QUESTION_TYPE.multiPartMedia) {
+    const oldQ = cat.questions[qi]
+    const media = readMediaFromEditForm(ci, qi, oldQ?.media)
+    if (media) {
+      newQ.media = media
+    }
   }
 
   cat.questions[qi] = newQ
+  activeEditCell = null
   clearRecord(mediaStaging)
   saveData()
   renderAll()
@@ -1858,7 +2463,69 @@ function setupEvents(): void {
     (e) => {
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')
       if (!target) return
-      if (target.dataset.action === 'yt-toggle-play') toggleYoutubePlayback()
+
+      switch (target.dataset.action) {
+        case 'yt-toggle-play':
+          toggleYoutubePlayback()
+          break
+        case 'mc-select': {
+          const card = target.closest('.play-mc-option') as HTMLElement | null
+          if (!card) break
+          if (card.closest('.play-mc-options')?.querySelector('.correct')) break
+          card.parentElement?.querySelectorAll('.play-mc-option').forEach((s) => s.classList.remove('selected'))
+          card.classList.add('selected')
+          break
+        }
+        case 'mpm-yt-play':
+        case 'ord-yt-play': {
+          const videoId = target.dataset.videoId
+          if (!videoId) break
+          const startSec = target.dataset.start ? Number(target.dataset.start) : undefined
+          const endSec = target.dataset.end ? Number(target.dataset.end) : undefined
+          createYoutubePlayer('m-yt-player', videoId, startSec, endSec)
+          $('m-yt-wrap').style.display = 'flex'
+          break
+        }
+        case 'mpm-submit-score': {
+          if (!activeQ) break
+          const team = data.teams[data.currentTurnIndex]
+          if (!team) break
+          const cat = data.categories[activeQ.catIdx]
+          const q = cat?.questions[activeQ.qIdx]
+          if (!q || q.type !== QUESTION_TYPE.multiPartMedia) break
+
+          const checkboxes = document.querySelectorAll<HTMLInputElement>('.mpm-score-row input[type="checkbox"]')
+          const correctCount = [...checkboxes].filter((cb) => cb.checked).length
+          const pts = scorePartial(activeQ.pts, q.parts.length, correctCount)
+
+          if (data.playStyle === PLAY_STYLE.streak) {
+            if (correctCount === q.parts.length) {
+              const result = scoreCorrect(activeQ.pts, team.streak)
+              team.score += result.points
+              team.streak = result.newStreak
+            } else if (correctCount === 0) {
+              team.streak = 0
+              data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+            } else {
+              team.score += pts
+              team.streak = 0
+              data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+            }
+          } else {
+            team.score += pts
+            data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+          }
+
+          saveData()
+          markUsed()
+          closeQModal()
+          renderScoreboard()
+          renderSubtitle()
+          break
+        }
+        default:
+          break
+      }
     },
     { signal },
   )
@@ -1937,7 +2604,7 @@ function setupEvents(): void {
           const list = document.getElementById('cell-ord-items')
           if (!list) break
           const count = list.children.length
-          list.appendChild(buildOrderingItemRow(count, '', count + 1))
+          list.appendChild(buildOrderingItemRow(count, { label: '' }, count + 1))
           rebuildOrdControls(list)
           break
         }
@@ -1964,6 +2631,52 @@ function setupEvents(): void {
           rebuildOrdControls(list)
           break
         }
+        case 'ord-toggle-media': {
+          const row = target.closest('.ord-item-row') as HTMLElement | null
+          const mediaSec = row?.querySelector('.ord-item-media') as HTMLElement | null
+          if (!row || !mediaSec) break
+          const isHidden = mediaSec.style.display === 'none'
+          mediaSec.style.display = isHidden ? '' : 'none'
+          row.classList.toggle('has-media', isHidden)
+          target.classList.toggle('active', isHidden)
+          break
+        }
+        case 'mpm-add-part': {
+          const list = document.getElementById('cell-mpm-parts')
+          if (!list) break
+          const count = list.children.length
+          const newPart: MultiPartMediaPart = { media: { type: MEDIA_TYPE.image, src: '' }, answer: '' }
+          list.appendChild(buildMultiPartMediaRow(count, newPart, count + 1))
+          rebuildMpmPartNumbers(list)
+          break
+        }
+        case 'mpm-remove-part': {
+          const list = document.getElementById('cell-mpm-parts')
+          if (!list || list.children.length <= 1) break
+          target.closest('.mpm-part-row')?.remove()
+          rebuildMpmPartNumbers(list)
+          break
+        }
+        case 'mpm-choose-image': {
+          const row = target.closest('.mpm-part-row')
+          const fileInput = row?.querySelector('.mpm-img-file') as HTMLInputElement | null
+          fileInput?.click()
+          break
+        }
+        case 'mpm-clear-image': {
+          const row = target.closest('.mpm-part-row') as HTMLElement | null
+          if (!row) break
+          const partIdx = row.dataset.partIdx ?? '0'
+          mediaStaging[mpmStagingKey(partIdx)] = null
+          const preview = row.querySelector('.mpm-img-preview') as HTMLImageElement | null
+          if (preview) { preview.src = ''; preview.style.display = 'none' }
+          const urlInput = row.querySelector('.mpm-img-url') as HTMLInputElement | null
+          if (urlInput) urlInput.value = ''
+          const urlError = row.querySelector('.mpm-img-url-error')
+          if (urlError) urlError.textContent = ''
+          target.style.display = 'none'
+          break
+        }
         default:
           break
       }
@@ -1984,6 +2697,8 @@ function setupEvents(): void {
         editingQuestionType = newType
         const container = document.getElementById('cell-answer-fields')
         if (container) renderAnswerFields(container, converted)
+        const mw = document.getElementById('cell-media-wrap')
+        if (mw) mw.style.display = newType === QUESTION_TYPE.multiPartMedia ? 'none' : ''
         return
       }
 
@@ -2000,6 +2715,46 @@ function setupEvents(): void {
         const qi = Number(target.dataset.qi)
         const file = target.files?.[0]
         if (file) handleMediaFileUpload(ci, qi, file, 'cell-img-preview', 'cell-img-clear')
+      }
+
+      if (target instanceof HTMLSelectElement && target.classList.contains('ord-media-type')) {
+        const row = target.closest('.ord-item-row') as HTMLElement | null
+        if (!row) return
+        const imgSec = row.querySelector('.ord-img-section') as HTMLElement | null
+        const ytSec = row.querySelector('.ord-yt-section') as HTMLElement | null
+        if (imgSec) imgSec.style.display = target.value === 'image' ? '' : 'none'
+        if (ytSec) ytSec.style.display = target.value === 'youtube' ? '' : 'none'
+      }
+
+      if (target instanceof HTMLSelectElement && target.classList.contains('mpm-media-type')) {
+        const row = target.closest('.mpm-part-row') as HTMLElement | null
+        if (!row) return
+        const imgSec = row.querySelector('.mpm-img-section') as HTMLElement | null
+        const ytSec = row.querySelector('.mpm-yt-section') as HTMLElement | null
+        if (imgSec) imgSec.style.display = target.value === 'image' ? '' : 'none'
+        if (ytSec) ytSec.style.display = target.value === 'youtube' ? '' : 'none'
+      }
+
+      if (target instanceof HTMLInputElement && target.classList.contains('mpm-img-file')) {
+        const file = target.files?.[0]
+        if (!file) return
+        const row = target.closest('.mpm-part-row') as HTMLElement | null
+        if (!row) return
+        const partIdx = row.dataset.partIdx ?? '0'
+        const reader = new FileReader()
+        reader.onload = (ev) => {
+          const base64 = (ev.target as FileReader).result as string
+          mediaStaging[mpmStagingKey(partIdx)] = { type: MEDIA_TYPE.image, src: base64 }
+          const preview = row.querySelector('.mpm-img-preview') as HTMLImageElement | null
+          if (preview) { preview.src = base64; preview.style.display = 'block' }
+          const clearBtn = row.querySelector('.mpm-img-clear') as HTMLElement | null
+          if (clearBtn) clearBtn.style.display = 'inline-block'
+          const urlInput = row.querySelector('.mpm-img-url') as HTMLInputElement | null
+          if (urlInput) urlInput.value = ''
+          const urlError = row.querySelector('.mpm-img-url-error')
+          if (urlError) urlError.textContent = ''
+        }
+        reader.readAsDataURL(file)
       }
     },
     { signal },
@@ -2061,6 +2816,102 @@ function setupEvents(): void {
       }
       if (target instanceof HTMLInputElement && target.id === 'cell-yt-url') {
         debouncedYtUrlCheck(target.value.trim())
+      }
+
+      if (target instanceof HTMLInputElement && target.classList.contains('ord-img-url')) {
+        const row = target.closest('.ord-item-row') as HTMLElement | null
+        if (!row) return
+        const url = target.value.trim()
+        const previewEl = row.querySelector('.ord-img-preview') as HTMLImageElement | null
+        if (!url) {
+          if (previewEl) previewEl.style.display = 'none'
+          return
+        }
+        const img = new Image()
+        img.onload = () => {
+          if (previewEl) { previewEl.src = url; previewEl.style.display = 'block' }
+        }
+        img.onerror = () => {
+          if (previewEl) previewEl.style.display = 'none'
+        }
+        img.src = url
+      }
+
+      if (target instanceof HTMLInputElement && target.classList.contains('ord-yt-url')) {
+        const row = target.closest('.ord-item-row') as HTMLElement | null
+        if (!row) return
+        const url = target.value.trim()
+        const thumbEl = row.querySelector('.ord-yt-thumb') as HTMLImageElement | null
+        const startEl = row.querySelector('.ord-yt-start') as HTMLInputElement | null
+        if (!url) {
+          if (thumbEl) thumbEl.style.display = 'none'
+          return
+        }
+        const parsed = parseYoutubeUrl(url)
+        if (!parsed) {
+          if (thumbEl) thumbEl.style.display = 'none'
+          return
+        }
+        if (thumbEl) {
+          thumbEl.src = `https://img.youtube.com/vi/${parsed.videoId}/hqdefault.jpg`
+          thumbEl.style.display = 'block'
+        }
+        if (parsed.startSeconds !== undefined && startEl && !startEl.value) {
+          startEl.value = String(parsed.startSeconds)
+        }
+      }
+
+      if (target instanceof HTMLInputElement && target.classList.contains('mpm-img-url')) {
+        const row = target.closest('.mpm-part-row') as HTMLElement | null
+        if (!row) return
+        const url = target.value.trim()
+        const errorEl = row.querySelector('.mpm-img-url-error')
+        const previewEl = row.querySelector('.mpm-img-preview') as HTMLImageElement | null
+        if (!url) {
+          if (errorEl) errorEl.textContent = ''
+          if (previewEl) previewEl.style.display = 'none'
+          return
+        }
+        const img = new Image()
+        img.onload = () => {
+          if (errorEl) errorEl.textContent = ''
+          if (previewEl) { previewEl.src = url; previewEl.style.display = 'block' }
+          const clearBtn = row.querySelector('.mpm-img-clear') as HTMLElement | null
+          if (clearBtn) clearBtn.style.display = 'inline-block'
+        }
+        img.onerror = () => {
+          if (errorEl) errorEl.textContent = 'Could not load image from this URL'
+          if (previewEl) previewEl.style.display = 'none'
+        }
+        img.src = url
+      }
+
+      if (target instanceof HTMLInputElement && target.classList.contains('mpm-yt-url')) {
+        const row = target.closest('.mpm-part-row') as HTMLElement | null
+        if (!row) return
+        const url = target.value.trim()
+        const errorEl = row.querySelector('.mpm-yt-error')
+        const thumbEl = row.querySelector('.mpm-yt-thumb') as HTMLImageElement | null
+        const startEl = row.querySelector('.mpm-yt-start') as HTMLInputElement | null
+        if (!url) {
+          if (errorEl) errorEl.textContent = ''
+          if (thumbEl) thumbEl.style.display = 'none'
+          return
+        }
+        const parsed = parseYoutubeUrl(url)
+        if (!parsed) {
+          if (errorEl) errorEl.textContent = 'Not a valid YouTube URL'
+          if (thumbEl) thumbEl.style.display = 'none'
+          return
+        }
+        if (errorEl) errorEl.textContent = ''
+        if (thumbEl) {
+          thumbEl.src = `https://img.youtube.com/vi/${parsed.videoId}/hqdefault.jpg`
+          thumbEl.style.display = 'block'
+        }
+        if (parsed.startSeconds !== undefined && startEl && !startEl.value) {
+          startEl.value = String(parsed.startSeconds)
+        }
       }
     },
     { signal },
@@ -2200,6 +3051,59 @@ function setupEvents(): void {
         saveData()
         renderScoreboard()
       }
+    },
+    { signal },
+  )
+
+  // Board drag & drop (category reorder in edit mode)
+  let dragColumn: HTMLElement | null = null
+
+  $('board').addEventListener(
+    'dragstart',
+    (e) => {
+      if (data.mode !== APP_MODE.edit) return
+      const col = (e.target as HTMLElement).closest('.board-column') as HTMLElement | null
+      if (!col) return
+      dragColumn = col
+      col.classList.add('dragging')
+      e.dataTransfer?.setData('text/plain', '')
+    },
+    { signal },
+  )
+
+  $('board').addEventListener(
+    'dragover',
+    (e) => {
+      if (!dragColumn) return
+      e.preventDefault()
+      const target = (e.target as HTMLElement).closest('.board-column') as HTMLElement | null
+      if (!target || target === dragColumn) return
+      const rect = target.getBoundingClientRect()
+      const mid = rect.left + rect.width / 2
+      const board = $('board')
+      if (e.clientX < mid) {
+        board.insertBefore(dragColumn, target)
+      } else {
+        board.insertBefore(dragColumn, target.nextSibling)
+      }
+    },
+    { signal },
+  )
+
+  $('board').addEventListener(
+    'dragend',
+    () => {
+      if (!dragColumn) return
+      dragColumn.classList.remove('dragging')
+      const cols = $('board').querySelectorAll<HTMLElement>('.board-column')
+      const newCategories = [...cols].map((col) => {
+        const ci = Number(col.dataset.ci)
+        return data.categories[ci]!
+      })
+      data.categories = newCategories
+      dragColumn = null
+      saveData()
+      renderBoard()
     },
     { signal },
   )

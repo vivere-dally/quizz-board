@@ -26,6 +26,7 @@ export const QUESTION_TYPE = {
   trueFalse: 'true-false',
   ordering: 'ordering',
   numeric: 'numeric',
+  multiPartMedia: 'multi-part-media',
 } as const
 export type QuestionType = (typeof QUESTION_TYPE)[keyof typeof QUESTION_TYPE]
 
@@ -58,9 +59,14 @@ export type TrueFalseQuestion = QuestionBase & {
   correctAnswer: boolean
 }
 
+export type OrderingItem = {
+  label: string
+  media?: QuestionMedia
+}
+
 export type OrderingQuestion = QuestionBase & {
   type: typeof QUESTION_TYPE.ordering
-  items: string[]
+  items: OrderingItem[]
 }
 
 export type NumericQuestion = QuestionBase & {
@@ -69,12 +75,23 @@ export type NumericQuestion = QuestionBase & {
   unit?: string
 }
 
+export type MultiPartMediaPart = {
+  media: QuestionMedia
+  answer: string
+}
+
+export type MultiPartMediaQuestion = QuestionBase & {
+  type: typeof QUESTION_TYPE.multiPartMedia
+  parts: MultiPartMediaPart[]
+}
+
 export type Question =
   | OpenQuestion
   | MultipleChoiceQuestion
   | TrueFalseQuestion
   | OrderingQuestion
   | NumericQuestion
+  | MultiPartMediaQuestion
 
 export const DEFAULT_QUESTION_TEXT = 'Write your question'
 export const DEFAULT_ANSWER_TEXT = 'Write your answer'
@@ -94,9 +111,11 @@ export function answerDisplayText(q: Question): string {
     case QUESTION_TYPE.trueFalse:
       return q.correctAnswer ? 'True' : 'False'
     case QUESTION_TYPE.ordering:
-      return q.items.join(' → ')
+      return q.items.map((item) => item.label).join(' → ')
     case QUESTION_TYPE.numeric:
       return q.unit ? `${q.correctValue} ${q.unit}` : String(q.correctValue)
+    case QUESTION_TYPE.multiPartMedia:
+      return q.parts.map((p, i) => `${i + 1}. ${p.answer}`).join(' | ')
     default: {
       const _exhaustive: never = q
       throw new Error(`unreachable: unknown question type ${(_exhaustive as Question).type}`)
@@ -130,7 +149,7 @@ export type AppData = {
 // ── Database ──
 
 const DB_NAME = 'quizboard'
-const DB_VERSION = 3
+const DB_VERSION = 4
 const STORE_NAME = 'app'
 const DOC_KEY = 'current'
 
@@ -188,9 +207,16 @@ function isValidQuestion(q: unknown): boolean {
     case QUESTION_TYPE.ordering:
       return Array.isArray(q.items)
         && q.items.length >= 2
-        && q.items.every((i: unknown) => typeof i === 'string')
+        && q.items.every((item: unknown) =>
+          typeof item === 'string'
+          || (isRecord(item) && typeof item.label === 'string'
+            && (!('media' in item) || item.media === undefined || isValidMedia(item.media)))
+        )
     case QUESTION_TYPE.numeric:
       return typeof q.correctValue === 'number'
+    case QUESTION_TYPE.multiPartMedia:
+      return Array.isArray(q.parts) && q.parts.length >= 1
+        && q.parts.every((p: unknown) => isRecord(p) && typeof p.answer === 'string' && isValidMedia(p.media))
     default:
       return false
   }
@@ -221,6 +247,9 @@ function normalizeAppData(value: unknown): void {
       }
       delete q.img
       delete q.audio
+      if (q.type === QUESTION_TYPE.ordering && Array.isArray(q.items)) {
+        q.items = q.items.map((item: unknown) => typeof item === 'string' ? { label: item } : item)
+      }
     }
   }
 }
