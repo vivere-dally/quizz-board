@@ -17,6 +17,9 @@ export type CategoryColor = (typeof CATEGORY_COLOR)[keyof typeof CATEGORY_COLOR]
 export const APP_MODE = { edit: 'edit', play: 'play' } as const
 export type AppMode = (typeof APP_MODE)[keyof typeof APP_MODE]
 
+export const PLAY_STYLE = { classic: 'classic', streak: 'streak' } as const
+export type PlayStyle = (typeof PLAY_STYLE)[keyof typeof PLAY_STYLE]
+
 export const QUESTION_TYPE = {
   open: 'open',
   multipleChoice: 'multiple-choice',
@@ -117,6 +120,7 @@ export type Team = {
 
 export type AppData = {
   mode: AppMode
+  playStyle: PlayStyle
   categories: Category[]
   teams: Team[]
   used: Record<string, boolean>
@@ -146,6 +150,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 const VALID_COLORS = new Set<string>(Object.values(CATEGORY_COLOR))
 const VALID_MODES = new Set<string>(Object.values(APP_MODE))
+const VALID_PLAY_STYLES = new Set<string>(Object.values(PLAY_STYLE))
 const VALID_QUESTION_TYPES = new Set<string>(Object.values(QUESTION_TYPE))
 
 function isValidMedia(m: unknown): boolean {
@@ -195,6 +200,7 @@ function normalizeAppData(value: unknown): void {
   if (!isRecord(value)) return
 
   if (typeof value.currentTurnIndex !== 'number') value.currentTurnIndex = 0
+  if (typeof value.playStyle !== 'string' || !VALID_PLAY_STYLES.has(value.playStyle)) value.playStyle = PLAY_STYLE.classic
 
   if (Array.isArray(value.teams)) {
     for (const team of value.teams) {
@@ -222,6 +228,7 @@ function normalizeAppData(value: unknown): void {
 function isAppData(value: unknown): value is AppData {
   if (!isRecord(value)) return false
   if (typeof value.mode !== 'string' || !VALID_MODES.has(value.mode)) return false
+  if (typeof value.playStyle !== 'string' || !VALID_PLAY_STYLES.has(value.playStyle)) return false
   if (!Array.isArray(value.categories) || !Array.isArray(value.teams) || !isRecord(value.used) || typeof value.currentTurnIndex !== 'number') return false
 
   for (const cat of value.categories) {

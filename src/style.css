@@ -876,6 +876,19 @@ h1 {
 /* ── TEAM SETUP ── */
 .team-setup-modal { max-width: 440px; }
 
+.ts-field-label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+}
+
+#ts-play-style {
+  width: 100%;
+  margin-bottom: 18px;
+}
+
 .ts-team-row {
   display: flex;
   align-items: center;

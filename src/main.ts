@@ -1,5 +1,5 @@
 import './style.css'
-import { APP_MODE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, DEFAULT_QUESTION_TEXT, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
+import { APP_MODE, PLAY_STYLE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, DEFAULT_QUESTION_TEXT, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
 import type { AppData, CategoryColor, Question, QuestionType, QuestionMedia, Team } from './persistence/db.ts'
 import { scoreCorrect, scoreWrong, nextCorrectPreview, streakBonusFor } from './lib/scoring.ts'
 
@@ -23,6 +23,7 @@ const MAX_CATEGORIES = 12
 
 const data: AppData = {
   mode: APP_MODE.edit,
+  playStyle: PLAY_STYLE.classic,
   categories: [],
   teams: [],
   used: {},
@@ -38,6 +39,7 @@ async function loadData(): Promise<void> {
   const saved = await loadAppData()
   if (saved) {
     data.mode = saved.mode
+    data.playStyle = saved.playStyle
     data.categories = saved.categories
     data.teams = saved.teams
     data.used = saved.used
@@ -319,7 +321,7 @@ function renderScoreboard(): void {
       card.appendChild(turnBadge)
     }
 
-    if (t.streak > 0) {
+    if (data.playStyle === PLAY_STYLE.streak && t.streak > 0) {
       const streakBadge = document.createElement('span')
       streakBadge.className = 'team-streak'
       const capped = Math.min(t.streak, 7)
@@ -466,14 +468,18 @@ function renderCurrentTeamLabel(): void {
   label.textContent = `${team.name}'s answer`
 
   const pts = activeQ?.pts ?? 0
-  const nextTotal = nextCorrectPreview(pts, team.streak)
   const info = document.createElement('span')
   info.className = 'current-team-streak-info'
-  if (team.streak > 0) {
-    const bonus = streakBonusFor(team.streak + 1)
-    info.textContent = ` — streak ${team.streak}, worth +${nextTotal} (${pts} + ${bonus} bonus)`
+  if (data.playStyle === PLAY_STYLE.streak) {
+    const nextTotal = nextCorrectPreview(pts, team.streak)
+    if (team.streak > 0) {
+      const bonus = streakBonusFor(team.streak + 1)
+      info.textContent = ` — streak ${team.streak}, worth +${nextTotal} (${pts} + ${bonus} bonus)`
+    } else {
+      info.textContent = ` — worth +${nextTotal}`
+    }
   } else {
-    info.textContent = ` — worth +${nextTotal}`
+    info.textContent = ` — worth +${pts}`
   }
   label.appendChild(info)
 
@@ -691,10 +697,15 @@ function markResult(correct: boolean): void {
   const team = data.teams[data.currentTurnIndex]
   if (!team) return
 
-  const result = correct ? scoreCorrect(activeQ.pts, team.streak) : scoreWrong()
-  team.score += result.points
-  team.streak = result.newStreak
-  if (!correct) {
+  if (data.playStyle === PLAY_STYLE.streak) {
+    const result = correct ? scoreCorrect(activeQ.pts, team.streak) : scoreWrong()
+    team.score += result.points
+    team.streak = result.newStreak
+    if (!correct) {
+      data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+    }
+  } else {
+    team.score += correct ? activeQ.pts : 0
     data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
   }
 
@@ -707,8 +718,13 @@ function markResult(correct: boolean): void {
 
 function skipQuestion(): void {
   if (!activeQ) return
+  if (data.playStyle === PLAY_STYLE.classic) {
+    data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+  }
   markUsed()
   closeQModal()
+  renderScoreboard()
+  renderSubtitle()
 }
 
 function markUsed(): void {
@@ -1606,6 +1622,26 @@ function openTeamSetup(): void {
   title.textContent = 'Team Setup'
   content.appendChild(title)
 
+  const styleLabel = document.createElement('label')
+  styleLabel.className = 'ts-field-label'
+  styleLabel.htmlFor = 'ts-play-style'
+  styleLabel.textContent = 'Game Mode'
+  content.appendChild(styleLabel)
+
+  const styleSelect = document.createElement('select')
+  styleSelect.className = 'edit-input'
+  styleSelect.id = 'ts-play-style'
+  const classicOpt = document.createElement('option')
+  classicOpt.value = PLAY_STYLE.classic
+  classicOpt.textContent = 'Classic — one question each'
+  styleSelect.appendChild(classicOpt)
+  const streakOpt = document.createElement('option')
+  streakOpt.value = PLAY_STYLE.streak
+  streakOpt.textContent = 'Streak — keep going until wrong'
+  styleSelect.appendChild(streakOpt)
+  styleSelect.value = PLAY_STYLE.classic
+  content.appendChild(styleSelect)
+
   const teamsWrap = document.createElement('div')
   teamsWrap.id = 'ts-teams'
   content.appendChild(teamsWrap)
@@ -1676,6 +1712,8 @@ function startGame(): void {
   }
   if (teams.length < 2) return
 
+  const styleSelect = document.getElementById('ts-play-style') as HTMLSelectElement | null
+  data.playStyle = styleSelect?.value === PLAY_STYLE.streak ? PLAY_STYLE.streak : PLAY_STYLE.classic
   data.teams = teams
   data.used = {}
   data.currentTurnIndex = 0
@@ -1688,6 +1726,7 @@ function cancelGame(): void {
   data.teams = []
   data.used = {}
   data.currentTurnIndex = 0
+  data.playStyle = PLAY_STYLE.classic
   switchMode(APP_MODE.edit)
 }
 
