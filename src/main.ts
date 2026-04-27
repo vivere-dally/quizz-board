@@ -175,7 +175,7 @@ function toggleYoutubePlayback(): void {
   updatePlayButton()
 }
 
-function createYoutubePlayer(containerId: string, videoId: string, startSeconds?: number, endSeconds?: number): void {
+function createYoutubePlayer(containerId: string, videoId: string, startSeconds?: number, endSeconds?: number, autoplay = false): void {
   destroyYoutubePlayer()
   ytPlaying = false
   const container = document.getElementById(containerId)
@@ -203,15 +203,20 @@ function createYoutubePlayer(containerId: string, videoId: string, startSeconds?
       width: 1,
       height: 1,
       playerVars: {
-        autoplay: 0,
+        autoplay: autoplay ? 1 : 0,
         ...(startSeconds !== undefined ? { start: startSeconds } : {}),
         ...(endSeconds !== undefined ? { end: endSeconds } : {}),
         rel: 0,
         fs: 0,
       },
       events: {
+        onReady: () => {
+          if (autoplay) {
+            ytPlaying = true
+            updatePlayButton()
+          }
+        },
         onStateChange: (event: YT.OnStateChangeEvent) => {
-          // 0 = ended
           if (event.data === 0) {
             ytPlaying = false
             updatePlayButton()
@@ -2740,7 +2745,7 @@ function setupEvents(): void {
           if (!videoId) break
           const startSec = target.dataset.start ? Number(target.dataset.start) : undefined
           const endSec = target.dataset.end ? Number(target.dataset.end) : undefined
-          createYoutubePlayer('m-yt-player', videoId, startSec, endSec)
+          createYoutubePlayer('m-yt-player', videoId, startSec, endSec, true)
           $('m-yt-wrap').style.display = 'flex'
           break
         }

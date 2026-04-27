@@ -112,7 +112,7 @@ export function answerDisplayText(q: Question): string {
     case QUESTION_TYPE.trueFalse:
       return q.correctAnswer ? 'True' : 'False'
     case QUESTION_TYPE.ordering:
-      return q.items.map((item) => item.label).join(' → ')
+      return q.items.map((item, i) => item.label || `#${i + 1}`).join(' → ')
     case QUESTION_TYPE.numeric:
       return q.unit ? `${q.correctValue} ${q.unit}` : String(q.correctValue)
     case QUESTION_TYPE.multiPartMedia:
