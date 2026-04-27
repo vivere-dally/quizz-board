@@ -7,6 +7,7 @@ type ActiveQ = {
   catIdx: number
   qIdx: number
   pts: number
+  stealTargetIdx: number | null
 }
 
 // ── Constants ──
@@ -364,6 +365,11 @@ function renderBoard(): void {
   const frag = document.createDocumentFragment()
   const isEdit = data.mode === APP_MODE.edit
 
+  if (data.categories.length === 0) {
+    el.style.gridTemplateColumns = ''
+    el.style.gridTemplateRows = ''
+  }
+
   if (isEdit && data.categories.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'board-empty'
@@ -385,17 +391,29 @@ function renderBoard(): void {
     return
   }
 
+  const maxQ = Math.max(0, ...data.categories.map(c => c.points.length))
+  const totalRows = 1 + maxQ + (isEdit ? 1 : 0)
+
   for (const [ci, cat] of data.categories.entries()) {
     const col = document.createElement('div')
     col.className = 'board-column'
+    col.style.gridRow = `span ${totalRows}`
     col.dataset.color = cat.color
     col.dataset.ci = String(ci)
+    if (cat.steal) col.dataset.steal = ''
     if (isEdit) col.draggable = true
 
     const header = cloneTemplate('tmpl-cat-header')
     const catName = header.querySelector('.cat-name') as HTMLButtonElement
     catName.textContent = cat.name
     catName.dataset.ci = String(ci)
+
+    if (cat.steal) {
+      const stealBadge = document.createElement('span')
+      stealBadge.className = 'cat-steal-badge'
+      stealBadge.textContent = 'STEAL'
+      header.appendChild(stealBadge)
+    }
 
     if (isEdit) {
       const dragHandle = document.createElement('span')
@@ -478,6 +496,8 @@ function renderBoard(): void {
   }
 
   el.textContent = ''
+  el.style.gridTemplateColumns = `repeat(${data.categories.length}, minmax(0, 280px))`
+  el.style.gridTemplateRows = `auto repeat(${maxQ}, 1fr)${isEdit ? ' auto' : ''}`
   el.appendChild(frag)
 }
 
@@ -869,7 +889,7 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   const q = cat.questions[qIdx]
   if (!q) return
 
-  activeQ = { catIdx, qIdx, pts }
+  activeQ = { catIdx, qIdx, pts, stealTargetIdx: null }
 
   const modal = $('q-modal')
   modal.className = 'modal'
@@ -899,7 +919,7 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
 
   destroyYoutubePlayer()
 
-  if (q.ffa) {
+  if (q.ffa || cat.steal) {
     imgEl.src = ''
     imgWrap.style.display = 'none'
     ytWrap.style.display = 'none'
@@ -919,7 +939,7 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   }
 
   const isMpmCarousel = q.type === QUESTION_TYPE.multiPartMedia
-  if (isMpmCarousel && !q.ffa) {
+  if (isMpmCarousel && !q.ffa && !cat.steal) {
     mpmCarousel = {
       parts: q.parts, pts, currentIdx: 0,
       results: q.parts.map(() => null), teamIdx: null,
@@ -936,8 +956,57 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
 
   const existingFfa = document.getElementById('ffa-announcement')
   if (existingFfa) existingFfa.remove()
+  const existingSteal = document.getElementById('steal-announcement')
+  if (existingSteal) existingSteal.remove()
 
-  if (q.ffa) {
+  if (cat.steal) {
+    $('m-question').style.display = 'none'
+    $('m-type-content').style.display = 'none'
+    $('btn-reveal').style.display = 'none'
+    $('btn-correct').style.display = 'none'
+    $('btn-wrong').style.display = 'none'
+    $('btn-skip').style.display = 'none'
+
+    const currentTeam = data.teams[data.currentTurnIndex]
+
+    const announcement = document.createElement('div')
+    announcement.id = 'steal-announcement'
+    announcement.className = 'steal-announcement'
+
+    const stealTitle = document.createElement('div')
+    stealTitle.className = 'steal-title'
+    stealTitle.textContent = 'STEAL'
+    announcement.appendChild(stealTitle)
+
+    const stealSub = document.createElement('div')
+    stealSub.className = 'steal-subtitle'
+    stealSub.textContent = `${currentTeam?.name ?? 'Team'}, choose a team to steal from!`
+    announcement.appendChild(stealSub)
+
+    const grid = document.createElement('div')
+    grid.className = 'steal-team-grid'
+
+    for (const [i, team] of data.teams.entries()) {
+      if (i === data.currentTurnIndex) continue
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'modal-btn steal-team-btn'
+      btn.textContent = team.name
+      btn.dataset.action = 'steal-pick-target'
+      btn.dataset.teamIdx = String(i)
+      grid.appendChild(btn)
+    }
+    announcement.appendChild(grid)
+
+    modal.querySelector('.modal-btn-row')!.before(announcement)
+
+    const teamEl = $('m-teams')
+    teamEl.textContent = ''
+    const label = document.createElement('div')
+    label.className = 'current-team-label steal-team-label'
+    label.textContent = `${currentTeam?.name ?? 'Team'}'s steal`
+    teamEl.appendChild(label)
+  } else if (q.ffa) {
     $('m-question').style.display = 'none'
     $('m-type-content').style.display = 'none'
     $('btn-reveal').style.display = 'none'
@@ -1113,7 +1182,28 @@ function markResult(correct: boolean): void {
   const team = data.teams[data.currentTurnIndex]
   if (!team) return
 
-  if (data.playStyle === PLAY_STYLE.streak) {
+  const stealTarget = activeQ.stealTargetIdx !== null
+    ? data.teams[activeQ.stealTargetIdx]
+    : null
+
+  if (stealTarget) {
+    if (data.playStyle === PLAY_STYLE.streak) {
+      if (correct) {
+        const result = scoreCorrect(activeQ.pts, team.streak)
+        team.score += result.points
+        team.streak = result.newStreak
+        stealTarget.score -= activeQ.pts
+      } else {
+        team.score -= activeQ.pts
+        team.streak = 0
+        data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+      }
+    } else {
+      team.score += correct ? activeQ.pts : -activeQ.pts
+      if (correct) stealTarget.score -= activeQ.pts
+      data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+    }
+  } else if (data.playStyle === PLAY_STYLE.streak) {
     const result = correct ? scoreCorrect(activeQ.pts, team.streak) : scoreWrong()
     team.score += result.points
     team.streak = result.newStreak
@@ -1208,6 +1298,16 @@ function editCategory(ci: number): void {
   }
   content.appendChild(colorRow)
 
+  const stealLabel = document.createElement('label')
+  stealLabel.className = 'steal-toggle'
+  const stealCheckbox = document.createElement('input')
+  stealCheckbox.type = 'checkbox'
+  stealCheckbox.id = 'ec-steal'
+  stealCheckbox.checked = cat.steal === true
+  stealLabel.appendChild(stealCheckbox)
+  stealLabel.appendChild(document.createTextNode('Steal'))
+  content.appendChild(stealLabel)
+
   const saveBtn = document.createElement('button')
   saveBtn.type = 'button'
   saveBtn.className = 'edit-save'
@@ -1230,6 +1330,14 @@ function saveCategoryEdit(ci: number): void {
   const color = selectedSwatch?.dataset.color
   if (color && Object.values(CATEGORY_COLOR).includes(color as CategoryColor)) {
     cat.color = color as CategoryColor
+  }
+
+  const stealEl = document.getElementById('ec-steal') as HTMLInputElement | null
+  if (stealEl?.checked) {
+    cat.steal = true
+    for (const q of cat.questions) delete q.ffa
+  } else {
+    delete cat.steal
   }
 
   saveData()
@@ -2014,13 +2122,15 @@ function editCell(ci: number, qi: number): void {
   x2Label.appendChild(document.createTextNode('×2 Multiplier'))
   content.appendChild(x2Label)
 
+  const isStealCat = data.categories[ci]?.steal === true
   const ffaLabel = document.createElement('label')
   ffaLabel.className = 'ffa-toggle'
+  if (isStealCat) ffaLabel.style.display = 'none'
   const ffaCheckbox = document.createElement('input')
   ffaCheckbox.type = 'checkbox'
   ffaCheckbox.className = 'ffa-toggle__checkbox'
   ffaCheckbox.id = 'cell-ffa'
-  ffaCheckbox.checked = question.ffa === true
+  ffaCheckbox.checked = !isStealCat && question.ffa === true
   ffaLabel.appendChild(ffaCheckbox)
   ffaLabel.appendChild(document.createTextNode('Free for All'))
   content.appendChild(ffaLabel)
@@ -2766,7 +2876,37 @@ function setupEvents(): void {
             const team = data.teams[data.currentTurnIndex]
             if (!team) break
 
-            if (data.playStyle === PLAY_STYLE.streak) {
+            const mpmStealTarget = activeQ.stealTargetIdx !== null
+              ? data.teams[activeQ.stealTargetIdx]
+              : null
+
+            if (mpmStealTarget) {
+              if (data.playStyle === PLAY_STYLE.streak) {
+                if (correctCount === totalParts) {
+                  const result = scoreCorrect(activeQ.pts, team.streak)
+                  team.score += result.points
+                  team.streak = result.newStreak
+                  mpmStealTarget.score -= pts
+                } else if (correctCount === 0) {
+                  team.score -= mpmCarousel.pts
+                  team.streak = 0
+                  data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+                } else {
+                  team.score += pts
+                  mpmStealTarget.score -= pts
+                  team.streak = 0
+                  data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+                }
+              } else {
+                if (correctCount === 0) {
+                  team.score -= mpmCarousel.pts
+                } else {
+                  team.score += pts
+                  mpmStealTarget.score -= pts
+                }
+                data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+              }
+            } else if (data.playStyle === PLAY_STYLE.streak) {
               if (correctCount === totalParts) {
                 const result = scoreCorrect(activeQ.pts, team.streak)
                 team.score += result.points
@@ -2825,6 +2965,54 @@ function setupEvents(): void {
         case 'ffa-nobody':
           markFfaNobody()
           break
+        case 'steal-pick-target': {
+          if (!activeQ) break
+          const targetIdx = Number(target.dataset.teamIdx)
+          activeQ.stealTargetIdx = targetIdx
+          const stealAnn = document.getElementById('steal-announcement')
+          if (stealAnn) stealAnn.remove()
+
+          const stealCat = data.categories[activeQ.catIdx]
+          const stealQ = stealCat?.questions[activeQ.qIdx]
+          if (!stealQ) break
+
+          $('m-question').style.display = ''
+          $('m-type-content').style.display = ''
+
+          const targetTeam = data.teams[targetIdx]
+          const currentTeam = data.teams[data.currentTurnIndex]
+          const teamEl = $('m-teams')
+          teamEl.textContent = ''
+          const stealLabel = document.createElement('div')
+          stealLabel.className = 'current-team-label steal-team-label'
+          stealLabel.textContent = `${currentTeam?.name ?? 'Team'} stealing from ${targetTeam?.name ?? 'Team'}`
+          teamEl.appendChild(stealLabel)
+
+          if (stealQ.type === QUESTION_TYPE.multiPartMedia) {
+            mpmCarousel = {
+              parts: stealQ.parts, pts: activeQ.pts, currentIdx: 0,
+              results: stealQ.parts.map(() => null), teamIdx: null,
+            }
+            $('btn-reveal').style.display = 'none'
+            $('btn-correct').style.display = 'inline-flex'
+            $('btn-wrong').style.display = 'inline-flex'
+            $('btn-skip').style.display = 'inline-flex'
+            renderMpmSlide(mpmCarousel)
+          } else {
+            $('btn-reveal').style.display = 'inline-flex'
+            $('btn-skip').style.display = ''
+          }
+
+          if (stealQ.media?.type === MEDIA_TYPE.image) {
+            const imgEl = $('m-image') as HTMLImageElement
+            imgEl.src = stealQ.media.src
+            $('m-image-wrap').style.display = 'flex'
+          } else if (stealQ.media?.type === MEDIA_TYPE.youtube) {
+            $('m-yt-wrap').style.display = 'flex'
+            createYoutubePlayer('m-yt-player', stealQ.media.videoId, stealQ.media.startSeconds, stealQ.media.endSeconds)
+          }
+          break
+        }
         default:
           break
       }

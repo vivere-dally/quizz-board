@@ -128,6 +128,7 @@ export type Category = {
   id: string
   name: string
   color: CategoryColor
+  steal?: boolean
   points: number[]
   questions: Question[]
 }

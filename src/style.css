@@ -245,8 +245,8 @@ h1 {
 
 /* ── BOARD ── */
 .board {
-  display: flex;
-  gap: 6px;
+  display: grid;
+  gap: 4px 6px;
   width: 100%;
   flex: 1;
   min-height: 0;
@@ -254,10 +254,8 @@ h1 {
 }
 
 .board-column {
-  flex: 0 1 280px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-rows: subgrid;
   min-width: 0;
 }
 
@@ -298,7 +296,7 @@ h1 {
 .cat-header {
   background: var(--cat-tile, var(--blue-tile));
   border-radius: var(--radius);
-  padding: 8px 6px;
+  padding: 8px 6px 18px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -712,6 +710,95 @@ h1 {
 .ffa-nobody-btn {
   background: #334;
   color: var(--text-muted);
+}
+
+/* ── STEAL ── */
+.steal-announcement {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 48px 20px;
+  min-height: 200px;
+}
+
+.steal-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 3.5rem;
+  color: #f97316;
+  text-shadow: 0 0 40px rgba(249, 115, 22, 0.6), 0 0 80px rgba(249, 115, 22, 0.3);
+  letter-spacing: 0.15em;
+  animation: steal-pulse 1.5s ease-in-out infinite;
+  text-align: center;
+}
+
+@keyframes steal-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.05); }
+}
+
+.steal-subtitle {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.steal-team-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.steal-team-btn {
+  background: #f97316;
+  color: #fff;
+}
+
+.steal-team-btn:active { transform: scale(0.97); }
+
+.steal-team-label {
+  color: #f97316;
+}
+
+
+.cat-steal-badge {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 0.55rem;
+  letter-spacing: 0.1em;
+  color: #f97316;
+  background: rgba(249, 115, 22, 0.15);
+  border: 1px solid rgba(249, 115, 22, 0.4);
+  border-radius: 3px;
+  padding: 0 5px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+[data-steal] .tile {
+  box-shadow: inset 0 0 0 1px rgba(249, 115, 22, 0.2);
+}
+
+.steal-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.steal-toggle input[type="checkbox"] {
+  accent-color: #f97316;
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
 }
 
 /* ── CURRENT TEAM LABEL (question modal) ── */
@@ -1768,7 +1855,6 @@ h1 {
 }
 
 @media (max-width: 600px) {
-  .board { flex-wrap: wrap; }
   .board-column { min-width: 100px; }
   .tile-pts { font-size: 1rem; }
   .cat-name { font-size: 0.85rem; }
