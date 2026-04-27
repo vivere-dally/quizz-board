@@ -1493,44 +1493,73 @@ h1 {
   color: var(--cat-accent, var(--text-muted));
 }
 
-/* ── MULTI-PART MEDIA (Play) ── */
-.play-mpm-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-.play-mpm-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1.5px solid #2a4080;
-  border-radius: 10px;
-  padding: 12px;
+/* ── MULTI-PART MEDIA (Play – Carousel) ── */
+.play-mpm-carousel {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  transition: border-color 0.3s;
+  gap: 16px;
+  margin-bottom: 20px;
 }
 
-.play-mpm-img {
-  width: 100%;
-  max-height: 160px;
-  object-fit: contain;
-  border-radius: 6px;
+.play-mpm-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
 }
 
-.play-mpm-label {
+.play-mpm-progress-label {
   font-family: 'Bebas Neue', sans-serif;
-  font-size: 0.9rem;
+  font-size: 1.1rem;
   color: var(--text-muted);
 }
 
-.play-mpm-answer {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--cat-accent, var(--gold));
-  text-align: center;
+.play-mpm-score-info {
+  font-size: 0.85rem;
+  color: var(--gold);
+}
+
+.play-mpm-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.play-mpm-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  transition: background 0.2s;
+}
+
+.play-mpm-dot.active {
+  background: var(--gold);
+  box-shadow: 0 0 8px rgba(245, 197, 24, 0.4);
+}
+
+.play-mpm-dot.correct { background: var(--green); }
+.play-mpm-dot.wrong { background: var(--red); }
+
+.play-mpm-slide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-height: 180px;
+}
+
+.play-mpm-slide-img {
+  max-width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.play-mpm-slide-label {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1rem;
+  color: var(--text-muted);
 }
 
 .play-mpm-yt-btn {
@@ -1539,40 +1568,52 @@ h1 {
   font-size: 1.4rem;
 }
 
-/* ── MULTI-PART SCORING ── */
-.mpm-scoring {
+/* ── MULTI-PART SUMMARY ── */
+.mpm-summary {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   margin: 16px 0;
 }
 
-.mpm-score-row {
+.mpm-summary-heading {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1.3rem;
+  color: var(--text-main);
+  text-align: center;
+}
+
+.mpm-summary-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 14px;
-  cursor: pointer;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-radius: 6px;
-  transition: background 0.15s;
+  font-size: 14px;
 }
 
-.mpm-score-row:hover { background: rgba(255, 255, 255, 0.04); }
-
-.mpm-score-row input[type="checkbox"] {
-  accent-color: var(--green);
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
+.mpm-summary-row.correct {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--green);
 }
 
-.mpm-score-total {
+.mpm-summary-row.wrong {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--red);
+}
+
+.mpm-summary-icon {
+  font-size: 1.2rem;
+  width: 24px;
+  text-align: center;
+}
+
+.mpm-summary-total {
   text-align: center;
   font-family: 'Bebas Neue', sans-serif;
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   color: var(--gold);
-  margin-top: 4px;
+  margin-top: 8px;
 }
 
 /* ── WINNER BANNER ── */

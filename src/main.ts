@@ -30,7 +30,18 @@ const data: AppData = {
   currentTurnIndex: 0,
 }
 
+type MpmPartResult = 'correct' | 'wrong' | null
+
+type MpmCarouselState = {
+  parts: MultiPartMediaPart[]
+  pts: number
+  currentIdx: number
+  results: MpmPartResult[]
+  teamIdx: number | null
+}
+
 let activeQ: ActiveQ | null = null
+let mpmCarousel: MpmCarouselState | null = null
 let activeEditCell: { ci: number; qi: number } | null = null
 const mediaStaging: Record<string, QuestionMedia | null> = {}
 
@@ -589,40 +600,22 @@ function renderPlayTypeContent(q: Question, container: HTMLElement): void {
       break
     }
     case QUESTION_TYPE.multiPartMedia: {
-      const grid = document.createElement('div')
-      grid.className = 'play-mpm-grid'
-      for (const [i, part] of q.parts.entries()) {
-        const card = document.createElement('div')
-        card.className = 'play-mpm-card'
-        card.dataset.partIdx = String(i)
+      const carousel = document.createElement('div')
+      carousel.className = 'play-mpm-carousel'
 
-        if (part.media.type === MEDIA_TYPE.image) {
-          const img = document.createElement('img')
-          img.src = part.media.src
-          img.alt = `Part ${i + 1}`
-          img.className = 'play-mpm-img'
-          card.appendChild(img)
-        } else if (part.media.type === MEDIA_TYPE.youtube) {
-          const ytBtn = document.createElement('button')
-          ytBtn.type = 'button'
-          ytBtn.className = 'yt-play-btn play-mpm-yt-btn'
-          ytBtn.textContent = '🔊'
-          ytBtn.dataset.action = 'mpm-yt-play'
-          ytBtn.dataset.partIdx = String(i)
-          ytBtn.dataset.videoId = part.media.videoId
-          if (part.media.startSeconds !== undefined) ytBtn.dataset.start = String(part.media.startSeconds)
-          if (part.media.endSeconds !== undefined) ytBtn.dataset.end = String(part.media.endSeconds)
-          card.appendChild(ytBtn)
-        }
+      const progress = document.createElement('div')
+      progress.className = 'play-mpm-progress'
+      carousel.appendChild(progress)
 
-        const partLabel = document.createElement('div')
-        partLabel.className = 'play-mpm-label'
-        partLabel.textContent = `Part ${i + 1}`
-        card.appendChild(partLabel)
+      const slide = document.createElement('div')
+      slide.className = 'play-mpm-slide'
+      carousel.appendChild(slide)
 
-        grid.appendChild(card)
-      }
-      container.appendChild(grid)
+      const slideLabel = document.createElement('div')
+      slideLabel.className = 'play-mpm-slide-label'
+      carousel.appendChild(slideLabel)
+
+      container.appendChild(carousel)
       break
     }
     default: {
@@ -709,24 +702,160 @@ function revealPlayTypeContent(q: Question, container: HTMLElement): void {
     }
     case QUESTION_TYPE.numeric:
       break
-    case QUESTION_TYPE.multiPartMedia: {
-      const cards = container.querySelectorAll<HTMLElement>('.play-mpm-card')
-      for (const card of cards) {
-        const idx = Number(card.dataset.partIdx)
-        const part = q.parts[idx]
-        if (!part) continue
-        const answerEl = document.createElement('div')
-        answerEl.className = 'play-mpm-answer'
-        answerEl.textContent = part.answer
-        card.appendChild(answerEl)
-      }
+    case QUESTION_TYPE.multiPartMedia:
       break
-    }
     default: {
       const _exhaustive: never = q
       throw new Error(`unreachable: unknown question type ${(_exhaustive as Question).type}`)
     }
   }
+}
+
+function renderMpmSlide(state: MpmCarouselState): void {
+  const carousel = document.querySelector('.play-mpm-carousel')
+  if (!carousel) return
+
+  const part = state.parts[state.currentIdx]
+  if (!part) return
+
+  const progress = carousel.querySelector('.play-mpm-progress')
+  if (progress) {
+    progress.textContent = ''
+
+    const label = document.createElement('span')
+    label.className = 'play-mpm-progress-label'
+    label.textContent = `Part ${state.currentIdx + 1} of ${state.parts.length}`
+    progress.appendChild(label)
+
+    const correctSoFar = state.results.filter((r) => r === 'correct').length
+    const perPart = Math.floor(state.pts / state.parts.length)
+    const scoreInfo = document.createElement('span')
+    scoreInfo.className = 'play-mpm-score-info'
+    scoreInfo.textContent = `${correctSoFar * perPart} pts so far`
+    progress.appendChild(scoreInfo)
+
+    const dots = document.createElement('div')
+    dots.className = 'play-mpm-dots'
+    for (let i = 0; i < state.parts.length; i++) {
+      const dot = document.createElement('span')
+      dot.className = 'play-mpm-dot'
+      if (i === state.currentIdx) dot.classList.add('active')
+      if (state.results[i] === 'correct') dot.classList.add('correct')
+      if (state.results[i] === 'wrong') dot.classList.add('wrong')
+      dots.appendChild(dot)
+    }
+    progress.appendChild(dots)
+  }
+
+  const slide = carousel.querySelector('.play-mpm-slide')
+  if (!slide) return
+  slide.textContent = ''
+  destroyYoutubePlayer()
+  $('m-yt-wrap').style.display = 'none'
+
+  if (part.media.type === MEDIA_TYPE.image) {
+    const img = document.createElement('img')
+    img.src = part.media.src
+    img.alt = `Part ${state.currentIdx + 1}`
+    img.className = 'play-mpm-slide-img'
+    slide.appendChild(img)
+  } else if (part.media.type === MEDIA_TYPE.youtube) {
+    const ytBtn = document.createElement('button')
+    ytBtn.type = 'button'
+    ytBtn.className = 'yt-play-btn play-mpm-yt-btn'
+    ytBtn.textContent = '🔊'
+    ytBtn.dataset.action = 'mpm-yt-play'
+    ytBtn.dataset.partIdx = String(state.currentIdx)
+    ytBtn.dataset.videoId = part.media.videoId
+    if (part.media.startSeconds !== undefined) ytBtn.dataset.start = String(part.media.startSeconds)
+    if (part.media.endSeconds !== undefined) ytBtn.dataset.end = String(part.media.endSeconds)
+    slide.appendChild(ytBtn)
+  }
+
+  const slideLabel = carousel.querySelector('.play-mpm-slide-label')
+  if (slideLabel) slideLabel.textContent = `Part ${state.currentIdx + 1}`
+}
+
+function mpmCarouselJudge(result: MpmPartResult): void {
+  if (!mpmCarousel) return
+  if (result !== null) mpmCarousel.results[mpmCarousel.currentIdx] = result
+  mpmCarouselAdvance()
+}
+
+function mpmCarouselAdvance(): void {
+  if (!mpmCarousel) return
+  const { results, currentIdx } = mpmCarousel
+  const len = results.length
+
+  for (let offset = 1; offset <= len; offset++) {
+    const idx = (currentIdx + offset) % len
+    if (results[idx] === null) {
+      mpmCarousel.currentIdx = idx
+      renderMpmSlide(mpmCarousel)
+      return
+    }
+  }
+
+  renderMpmSummary()
+}
+
+function renderMpmSummary(): void {
+  if (!mpmCarousel || !activeQ) return
+
+  const { parts, results, pts } = mpmCarousel
+  const correctCount = results.filter((r) => r === 'correct').length
+  const totalScore = scorePartial(pts, parts.length, correctCount)
+
+  $('btn-correct').style.display = 'none'
+  $('btn-wrong').style.display = 'none'
+  $('btn-skip').style.display = 'none'
+
+  destroyYoutubePlayer()
+  $('m-yt-wrap').style.display = 'none'
+
+  const container = $('m-type-content')
+  container.textContent = ''
+
+  const summary = document.createElement('div')
+  summary.className = 'mpm-summary'
+
+  const heading = document.createElement('div')
+  heading.className = 'mpm-summary-heading'
+  heading.textContent = 'Results'
+  summary.appendChild(heading)
+
+  for (const [i, part] of parts.entries()) {
+    const row = document.createElement('div')
+    row.className = 'mpm-summary-row'
+    row.classList.add(results[i] === 'correct' ? 'correct' : 'wrong')
+
+    const icon = document.createElement('span')
+    icon.className = 'mpm-summary-icon'
+    icon.textContent = results[i] === 'correct' ? '✓' : '✗'
+    row.appendChild(icon)
+
+    const text = document.createElement('span')
+    text.textContent = `Part ${i + 1}: ${part.answer}`
+    row.appendChild(text)
+
+    summary.appendChild(row)
+  }
+
+  const total = document.createElement('div')
+  total.className = 'mpm-summary-total'
+  total.textContent = `${correctCount} of ${parts.length} correct — ${totalScore} pts`
+  summary.appendChild(total)
+
+  const submitBtn = document.createElement('button')
+  submitBtn.type = 'button'
+  submitBtn.className = 'modal-btn btn-correct'
+  submitBtn.textContent = '✓ Submit Score'
+  submitBtn.dataset.action = 'mpm-carousel-submit'
+  summary.appendChild(submitBtn)
+
+  container.appendChild(summary)
+
+  $('m-answer').style.display = 'block'
 }
 
 function openQuestion(catIdx: number, qIdx: number, pts: number): void {
@@ -784,9 +913,21 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
     ytWrap.style.display = 'none'
   }
 
-  $('btn-reveal').style.display = 'inline-flex'
-  $('btn-correct').style.display = 'none'
-  $('btn-wrong').style.display = 'none'
+  const isMpmCarousel = q.type === QUESTION_TYPE.multiPartMedia
+  if (isMpmCarousel && !q.ffa) {
+    mpmCarousel = {
+      parts: q.parts, pts, currentIdx: 0,
+      results: q.parts.map(() => null), teamIdx: null,
+    }
+    $('btn-reveal').style.display = 'none'
+    $('btn-correct').style.display = 'inline-flex'
+    $('btn-wrong').style.display = 'inline-flex'
+    renderMpmSlide(mpmCarousel)
+  } else {
+    $('btn-reveal').style.display = 'inline-flex'
+    $('btn-correct').style.display = 'none'
+    $('btn-wrong').style.display = 'none'
+  }
 
   const existingFfa = document.getElementById('ffa-announcement')
   if (existingFfa) existingFfa.remove()
@@ -819,8 +960,15 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
       announcement.remove()
       $('m-question').style.display = ''
       $('m-type-content').style.display = ''
-      $('btn-reveal').style.display = 'inline-flex'
-      $('btn-skip').style.display = ''
+
+      if (isMpmCarousel) {
+        $('btn-reveal').style.display = 'none'
+        $('btn-skip').style.display = 'none'
+        renderFfaTeamPicker()
+      } else {
+        $('btn-reveal').style.display = 'inline-flex'
+        $('btn-skip').style.display = ''
+      }
 
       if (q.media?.type === MEDIA_TYPE.image) {
         imgEl.src = q.media.src
@@ -857,7 +1005,6 @@ function revealAnswer(): void {
   if (!q) return
 
   revealPlayTypeContent(q, $('m-type-content'))
-  const isMpm = q.type === QUESTION_TYPE.multiPartMedia
 
   $('m-answer').style.display = 'block'
   $('btn-reveal').style.display = 'none'
@@ -866,76 +1013,27 @@ function revealAnswer(): void {
     $('btn-correct').style.display = 'none'
     $('btn-wrong').style.display = 'none'
     $('btn-skip').style.display = 'none'
-    renderFfaTeamPicker(isMpm ? q : null, activeQ.pts)
+    renderFfaTeamPicker()
     return
   }
 
-  if (isMpm) {
-    if (q.type === QUESTION_TYPE.multiPartMedia) {
-      $('btn-correct').style.display = 'none'
-      $('btn-wrong').style.display = 'none'
-      renderMpmScoring(q, activeQ.pts)
-    }
-  } else {
-    $('btn-correct').style.display = 'inline-flex'
-    $('btn-wrong').style.display = 'inline-flex'
+  $('btn-correct').style.display = 'inline-flex'
+  $('btn-wrong').style.display = 'inline-flex'
 
-    if (q.type === QUESTION_TYPE.multipleChoice) {
-      const selected = $('m-type-content').querySelector<HTMLElement>('.play-mc-option.selected')
-      if (selected) {
-        const selectedIdx = Number(selected.dataset.idx)
-        if (selectedIdx === q.correctIndex) {
-          $('btn-correct').classList.add('auto-suggested')
-        } else {
-          $('btn-wrong').classList.add('auto-suggested')
-        }
+  if (q.type === QUESTION_TYPE.multipleChoice) {
+    const selected = $('m-type-content').querySelector<HTMLElement>('.play-mc-option.selected')
+    if (selected) {
+      const selectedIdx = Number(selected.dataset.idx)
+      if (selectedIdx === q.correctIndex) {
+        $('btn-correct').classList.add('auto-suggested')
+      } else {
+        $('btn-wrong').classList.add('auto-suggested')
       }
     }
   }
 }
 
-function renderMpmScoring(q: { parts: MultiPartMediaPart[] }, pts: number): void {
-  const existing = document.getElementById('mpm-scoring-container')
-  if (existing) existing.remove()
-
-  const container = document.createElement('div')
-  container.id = 'mpm-scoring-container'
-  container.className = 'mpm-scoring'
-
-  for (const [i, part] of q.parts.entries()) {
-    const row = document.createElement('label')
-    row.className = 'mpm-score-row'
-    const cb = document.createElement('input')
-    cb.type = 'checkbox'
-    cb.dataset.partIdx = String(i)
-    row.appendChild(cb)
-    row.appendChild(document.createTextNode(`Part ${i + 1}: ${part.answer}`))
-    container.appendChild(row)
-  }
-
-  const totalEl = document.createElement('div')
-  totalEl.className = 'mpm-score-total'
-  const perPart = Math.floor(pts / q.parts.length)
-  totalEl.textContent = `Score: 0 / ${pts} pts (${perPart} per part)`
-  container.appendChild(totalEl)
-
-  container.addEventListener('change', () => {
-    const checked = container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked').length
-    totalEl.textContent = `Score: ${perPart * checked} / ${pts} pts (${perPart} per part)`
-  })
-
-  const submitBtn = document.createElement('button')
-  submitBtn.type = 'button'
-  submitBtn.className = 'modal-btn btn-correct'
-  submitBtn.textContent = '✓ Submit Score'
-  submitBtn.dataset.action = 'mpm-submit-score'
-  container.appendChild(submitBtn)
-
-  const typeContent = $('m-type-content')
-  typeContent.appendChild(container)
-}
-
-function renderFfaTeamPicker(mpmQuestion: ({ parts: MultiPartMediaPart[] }) | null, pts: number): void {
+function renderFfaTeamPicker(): void {
   const existing = document.getElementById('ffa-team-picker')
   if (existing) existing.remove()
 
@@ -972,16 +1070,8 @@ function renderFfaTeamPicker(mpmQuestion: ({ parts: MultiPartMediaPart[] }) | nu
   const teamEl = $('m-teams')
   teamEl.textContent = ''
   teamEl.appendChild(container)
-
-  if (mpmQuestion) {
-    ffaMpmQuestion = mpmQuestion
-    ffaMpmPts = pts
-  }
 }
 
-let ffaMpmQuestion: { parts: MultiPartMediaPart[] } | null = null
-let ffaMpmPts = 0
-let ffaSelectedTeamIdx: number | null = null
 
 function markFfaResult(teamIdx: number): void {
   if (!activeQ) return
@@ -1007,30 +1097,6 @@ function markFfaNobody(): void {
     data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
   }
 
-  markUsed()
-  closeQModal()
-  renderScoreboard()
-  renderSubtitle()
-}
-
-function markFfaMpmResult(teamIdx: number): void {
-  if (!activeQ || !ffaMpmQuestion) return
-  const team = data.teams[teamIdx]
-  if (!team) return
-
-  const checkboxes = document.querySelectorAll<HTMLInputElement>('.mpm-score-row input[type="checkbox"]')
-  const correctCount = [...checkboxes].filter((cb) => cb.checked).length
-  const pts = scorePartial(ffaMpmPts, ffaMpmQuestion.parts.length, correctCount)
-  team.score += pts
-
-  if (data.playStyle === PLAY_STYLE.classic) {
-    data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
-  }
-
-  ffaMpmQuestion = null
-  ffaMpmPts = 0
-  ffaSelectedTeamIdx = null
-  saveData()
   markUsed()
   closeQModal()
   renderScoreboard()
@@ -1086,9 +1152,7 @@ function closeQModal(): void {
   destroyYoutubePlayer()
   $('q-overlay').style.display = 'none'
   activeQ = null
-  ffaMpmQuestion = null
-  ffaMpmPts = 0
-  ffaSelectedTeamIdx = null
+  mpmCarousel = null
   const ffaAnnouncement = document.getElementById('ffa-announcement')
   if (ffaAnnouncement) ffaAnnouncement.remove()
   const ffaPicker = document.getElementById('ffa-team-picker')
@@ -2639,9 +2703,18 @@ function setupEvents(): void {
   // Question modal buttons
   $('btn-close-question').addEventListener('click', closeQModal, { signal })
   $('btn-reveal').addEventListener('click', revealAnswer, { signal })
-  $('btn-correct').addEventListener('click', () => markResult(true), { signal })
-  $('btn-wrong').addEventListener('click', () => markResult(false), { signal })
-  $('btn-skip').addEventListener('click', skipQuestion, { signal })
+  $('btn-correct').addEventListener('click', () => {
+    if (mpmCarousel) { mpmCarouselJudge('correct'); return }
+    markResult(true)
+  }, { signal })
+  $('btn-wrong').addEventListener('click', () => {
+    if (mpmCarousel) { mpmCarouselJudge('wrong'); return }
+    markResult(false)
+  }, { signal })
+  $('btn-skip').addEventListener('click', () => {
+    if (mpmCarousel) { mpmCarouselJudge(null); return }
+    skipQuestion()
+  }, { signal })
 
   $('q-modal').addEventListener(
     'click',
@@ -2671,42 +2744,43 @@ function setupEvents(): void {
           $('m-yt-wrap').style.display = 'flex'
           break
         }
-        case 'mpm-submit-score': {
-          if (!activeQ) break
-          const cat = data.categories[activeQ.catIdx]
-          const q = cat?.questions[activeQ.qIdx]
-          if (!q || q.type !== QUESTION_TYPE.multiPartMedia) break
+        case 'mpm-carousel-submit': {
+          if (!activeQ || !mpmCarousel) break
+          const correctCount = mpmCarousel.results.filter((r) => r === 'correct').length
+          const totalParts = mpmCarousel.parts.length
+          const pts = scorePartial(mpmCarousel.pts, totalParts, correctCount)
 
-          if (q.ffa && ffaSelectedTeamIdx !== null) {
-            markFfaMpmResult(ffaSelectedTeamIdx)
-            break
-          }
-
-          const team = data.teams[data.currentTurnIndex]
-          if (!team) break
-
-          const checkboxes = document.querySelectorAll<HTMLInputElement>('.mpm-score-row input[type="checkbox"]')
-          const correctCount = [...checkboxes].filter((cb) => cb.checked).length
-          const pts = scorePartial(activeQ.pts, q.parts.length, correctCount)
-
-          if (data.playStyle === PLAY_STYLE.streak) {
-            if (correctCount === q.parts.length) {
-              const result = scoreCorrect(activeQ.pts, team.streak)
-              team.score += result.points
-              team.streak = result.newStreak
-            } else if (correctCount === 0) {
-              team.streak = 0
-              data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
-            } else {
-              team.score += pts
-              team.streak = 0
+          if (mpmCarousel.teamIdx !== null) {
+            const team = data.teams[mpmCarousel.teamIdx]
+            if (!team) break
+            team.score += pts
+            if (data.playStyle === PLAY_STYLE.classic) {
               data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
             }
           } else {
-            team.score += pts
-            data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+            const team = data.teams[data.currentTurnIndex]
+            if (!team) break
+
+            if (data.playStyle === PLAY_STYLE.streak) {
+              if (correctCount === totalParts) {
+                const result = scoreCorrect(activeQ.pts, team.streak)
+                team.score += result.points
+                team.streak = result.newStreak
+              } else if (correctCount === 0) {
+                team.streak = 0
+                data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+              } else {
+                team.score += pts
+                team.streak = 0
+                data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+              }
+            } else {
+              team.score += pts
+              data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+            }
           }
 
+          mpmCarousel = null
           saveData()
           markUsed()
           closeQModal()
@@ -2716,8 +2790,15 @@ function setupEvents(): void {
         }
         case 'ffa-pick-team': {
           const teamIdx = Number(target.dataset.teamIdx)
-          if (ffaMpmQuestion) {
-            ffaSelectedTeamIdx = teamIdx
+          if (!activeQ) { markFfaResult(teamIdx); break }
+          const cat = data.categories[activeQ.catIdx]
+          const q = cat?.questions[activeQ.qIdx]
+
+          if (q?.type === QUESTION_TYPE.multiPartMedia) {
+            mpmCarousel = {
+              parts: q.parts, pts: activeQ.pts, currentIdx: 0,
+              results: q.parts.map(() => null), teamIdx,
+            }
             const picker = document.getElementById('ffa-team-picker')
             if (picker) picker.remove()
             const teamEl = $('m-teams')
@@ -2726,7 +2807,11 @@ function setupEvents(): void {
             label.className = 'current-team-label'
             label.textContent = `${data.teams[teamIdx]?.name ?? ''}'s answer`
             teamEl.appendChild(label)
-            renderMpmScoring(ffaMpmQuestion, ffaMpmPts)
+            renderPlayTypeContent(q, $('m-type-content'))
+            $('btn-correct').style.display = 'inline-flex'
+            $('btn-wrong').style.display = 'inline-flex'
+            $('btn-skip').style.display = 'inline-flex'
+            renderMpmSlide(mpmCarousel)
           } else {
             markFfaResult(teamIdx)
           }

@@ -5,7 +5,7 @@
   "authors": ["vivere-dally", "bada"],
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 15173",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
