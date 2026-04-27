@@ -41,6 +41,7 @@ type QuestionBase = {
   q: string
   media?: QuestionMedia
   x2?: boolean
+  ffa?: boolean
 }
 
 export type OpenQuestion = QuestionBase & {
@@ -191,6 +192,7 @@ function isValidQuestion(q: unknown): boolean {
   if (typeof q.q !== 'string') return false
   if ('media' in q && q.media !== undefined && !isValidMedia(q.media)) return false
   if ('x2' in q && q.x2 !== undefined && typeof q.x2 !== 'boolean') return false
+  if ('ffa' in q && q.ffa !== undefined && typeof q.ffa !== 'boolean') return false
 
   switch (q.type) {
     case QUESTION_TYPE.open:

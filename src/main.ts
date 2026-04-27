@@ -765,7 +765,11 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
 
   destroyYoutubePlayer()
 
-  if (q.media?.type === MEDIA_TYPE.image) {
+  if (q.ffa) {
+    imgEl.src = ''
+    imgWrap.style.display = 'none'
+    ytWrap.style.display = 'none'
+  } else if (q.media?.type === MEDIA_TYPE.image) {
     imgEl.src = q.media.src
     imgWrap.style.display = 'flex'
     ytWrap.style.display = 'none'
@@ -784,28 +788,90 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   $('btn-correct').style.display = 'none'
   $('btn-wrong').style.display = 'none'
 
-  renderCurrentTeamLabel()
+  const existingFfa = document.getElementById('ffa-announcement')
+  if (existingFfa) existingFfa.remove()
+
+  if (q.ffa) {
+    $('m-question').style.display = 'none'
+    $('m-type-content').style.display = 'none'
+    $('btn-reveal').style.display = 'none'
+    $('btn-skip').style.display = 'none'
+
+    const announcement = document.createElement('div')
+    announcement.id = 'ffa-announcement'
+    announcement.className = 'ffa-announcement'
+
+    const title = document.createElement('div')
+    title.className = 'ffa-title'
+    title.textContent = 'FREE FOR ALL'
+    announcement.appendChild(title)
+
+    const sub = document.createElement('div')
+    sub.className = 'ffa-subtitle'
+    sub.textContent = 'Every team can answer this question!'
+    announcement.appendChild(sub)
+
+    const revealBtn = document.createElement('button')
+    revealBtn.type = 'button'
+    revealBtn.className = 'modal-btn btn-reveal'
+    revealBtn.textContent = 'Reveal Question'
+    revealBtn.addEventListener('click', () => {
+      announcement.remove()
+      $('m-question').style.display = ''
+      $('m-type-content').style.display = ''
+      $('btn-reveal').style.display = 'inline-flex'
+      $('btn-skip').style.display = ''
+
+      if (q.media?.type === MEDIA_TYPE.image) {
+        imgEl.src = q.media.src
+        imgWrap.style.display = 'flex'
+      } else if (q.media?.type === MEDIA_TYPE.youtube) {
+        ytWrap.style.display = 'flex'
+        createYoutubePlayer('m-yt-player', q.media.videoId, q.media.startSeconds, q.media.endSeconds)
+      }
+    }, { once: true })
+    announcement.appendChild(revealBtn)
+
+    modal.querySelector('.modal-btn-row')!.before(announcement)
+
+    const teamEl = $('m-teams')
+    teamEl.textContent = ''
+    const label = document.createElement('div')
+    label.className = 'current-team-label ffa-team-label'
+    label.textContent = 'Any team can answer!'
+    teamEl.appendChild(label)
+  } else {
+    $('m-question').style.display = ''
+    $('m-type-content').style.display = ''
+    $('btn-skip').style.display = ''
+    renderCurrentTeamLabel()
+  }
+
   $('q-overlay').style.display = 'flex'
 }
 
 function revealAnswer(): void {
-  let isMpm = false
-  if (activeQ) {
-    const cat = data.categories[activeQ.catIdx]
-    const q = cat?.questions[activeQ.qIdx]
-    if (q) {
-      revealPlayTypeContent(q, $('m-type-content'))
-      isMpm = q.type === QUESTION_TYPE.multiPartMedia
-    }
-  }
+  if (!activeQ) return
+  const cat = data.categories[activeQ.catIdx]
+  const q = cat?.questions[activeQ.qIdx]
+  if (!q) return
+
+  revealPlayTypeContent(q, $('m-type-content'))
+  const isMpm = q.type === QUESTION_TYPE.multiPartMedia
 
   $('m-answer').style.display = 'block'
   $('btn-reveal').style.display = 'none'
 
-  if (isMpm && activeQ) {
-    const cat = data.categories[activeQ.catIdx]
-    const q = cat?.questions[activeQ.qIdx]
-    if (q?.type === QUESTION_TYPE.multiPartMedia) {
+  if (q.ffa) {
+    $('btn-correct').style.display = 'none'
+    $('btn-wrong').style.display = 'none'
+    $('btn-skip').style.display = 'none'
+    renderFfaTeamPicker(isMpm ? q : null, activeQ.pts)
+    return
+  }
+
+  if (isMpm) {
+    if (q.type === QUESTION_TYPE.multiPartMedia) {
       $('btn-correct').style.display = 'none'
       $('btn-wrong').style.display = 'none'
       renderMpmScoring(q, activeQ.pts)
@@ -814,18 +880,14 @@ function revealAnswer(): void {
     $('btn-correct').style.display = 'inline-flex'
     $('btn-wrong').style.display = 'inline-flex'
 
-    if (activeQ) {
-      const cat = data.categories[activeQ.catIdx]
-      const q = cat?.questions[activeQ.qIdx]
-      if (q?.type === QUESTION_TYPE.multipleChoice) {
-        const selected = $('m-type-content').querySelector<HTMLElement>('.play-mc-option.selected')
-        if (selected) {
-          const selectedIdx = Number(selected.dataset.idx)
-          if (selectedIdx === q.correctIndex) {
-            $('btn-correct').classList.add('auto-suggested')
-          } else {
-            $('btn-wrong').classList.add('auto-suggested')
-          }
+    if (q.type === QUESTION_TYPE.multipleChoice) {
+      const selected = $('m-type-content').querySelector<HTMLElement>('.play-mc-option.selected')
+      if (selected) {
+        const selectedIdx = Number(selected.dataset.idx)
+        if (selectedIdx === q.correctIndex) {
+          $('btn-correct').classList.add('auto-suggested')
+        } else {
+          $('btn-wrong').classList.add('auto-suggested')
         }
       }
     }
@@ -871,6 +933,108 @@ function renderMpmScoring(q: { parts: MultiPartMediaPart[] }, pts: number): void
 
   const typeContent = $('m-type-content')
   typeContent.appendChild(container)
+}
+
+function renderFfaTeamPicker(mpmQuestion: ({ parts: MultiPartMediaPart[] }) | null, pts: number): void {
+  const existing = document.getElementById('ffa-team-picker')
+  if (existing) existing.remove()
+
+  const container = document.createElement('div')
+  container.id = 'ffa-team-picker'
+  container.className = 'ffa-team-picker'
+
+  const heading = document.createElement('div')
+  heading.className = 'ffa-picker-heading'
+  heading.textContent = 'Which team answered?'
+  container.appendChild(heading)
+
+  const grid = document.createElement('div')
+  grid.className = 'ffa-team-grid'
+
+  for (const [i, team] of data.teams.entries()) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'modal-btn ffa-team-btn'
+    btn.textContent = team.name
+    btn.dataset.action = 'ffa-pick-team'
+    btn.dataset.teamIdx = String(i)
+    grid.appendChild(btn)
+  }
+  container.appendChild(grid)
+
+  const nobodyBtn = document.createElement('button')
+  nobodyBtn.type = 'button'
+  nobodyBtn.className = 'modal-btn ffa-nobody-btn'
+  nobodyBtn.textContent = 'Nobody got it'
+  nobodyBtn.dataset.action = 'ffa-nobody'
+  container.appendChild(nobodyBtn)
+
+  const teamEl = $('m-teams')
+  teamEl.textContent = ''
+  teamEl.appendChild(container)
+
+  if (mpmQuestion) {
+    ffaMpmQuestion = mpmQuestion
+    ffaMpmPts = pts
+  }
+}
+
+let ffaMpmQuestion: { parts: MultiPartMediaPart[] } | null = null
+let ffaMpmPts = 0
+let ffaSelectedTeamIdx: number | null = null
+
+function markFfaResult(teamIdx: number): void {
+  if (!activeQ) return
+  const team = data.teams[teamIdx]
+  if (!team) return
+
+  team.score += activeQ.pts
+  if (data.playStyle === PLAY_STYLE.classic) {
+    data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+  }
+
+  saveData()
+  markUsed()
+  closeQModal()
+  renderScoreboard()
+  renderSubtitle()
+}
+
+function markFfaNobody(): void {
+  if (!activeQ) return
+
+  if (data.playStyle === PLAY_STYLE.classic) {
+    data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+  }
+
+  markUsed()
+  closeQModal()
+  renderScoreboard()
+  renderSubtitle()
+}
+
+function markFfaMpmResult(teamIdx: number): void {
+  if (!activeQ || !ffaMpmQuestion) return
+  const team = data.teams[teamIdx]
+  if (!team) return
+
+  const checkboxes = document.querySelectorAll<HTMLInputElement>('.mpm-score-row input[type="checkbox"]')
+  const correctCount = [...checkboxes].filter((cb) => cb.checked).length
+  const pts = scorePartial(ffaMpmPts, ffaMpmQuestion.parts.length, correctCount)
+  team.score += pts
+
+  if (data.playStyle === PLAY_STYLE.classic) {
+    data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+  }
+
+  ffaMpmQuestion = null
+  ffaMpmPts = 0
+  ffaSelectedTeamIdx = null
+  saveData()
+  markUsed()
+  closeQModal()
+  renderScoreboard()
+  renderSubtitle()
 }
 
 function markResult(correct: boolean): void {
@@ -922,6 +1086,13 @@ function closeQModal(): void {
   destroyYoutubePlayer()
   $('q-overlay').style.display = 'none'
   activeQ = null
+  ffaMpmQuestion = null
+  ffaMpmPts = 0
+  ffaSelectedTeamIdx = null
+  const ffaAnnouncement = document.getElementById('ffa-announcement')
+  if (ffaAnnouncement) ffaAnnouncement.remove()
+  const ffaPicker = document.getElementById('ffa-team-picker')
+  if (ffaPicker) ffaPicker.remove()
 }
 
 // ── Category Edit ──
@@ -1774,6 +1945,17 @@ function editCell(ci: number, qi: number): void {
   x2Label.appendChild(document.createTextNode('×2 Multiplier'))
   content.appendChild(x2Label)
 
+  const ffaLabel = document.createElement('label')
+  ffaLabel.className = 'ffa-toggle'
+  const ffaCheckbox = document.createElement('input')
+  ffaCheckbox.type = 'checkbox'
+  ffaCheckbox.className = 'ffa-toggle__checkbox'
+  ffaCheckbox.id = 'cell-ffa'
+  ffaCheckbox.checked = question.ffa === true
+  ffaLabel.appendChild(ffaCheckbox)
+  ffaLabel.appendChild(document.createTextNode('Free for All'))
+  content.appendChild(ffaLabel)
+
   activeEditCell = { ci, qi }
   editingQuestionType = question.type
 
@@ -2055,6 +2237,9 @@ function saveCellEdit(ci: number, qi: number): void {
 
   const x2El = document.getElementById('cell-x2') as HTMLInputElement | null
   if (x2El?.checked) newQ.x2 = true
+
+  const ffaEl = document.getElementById('cell-ffa') as HTMLInputElement | null
+  if (ffaEl?.checked) newQ.ffa = true
 
   if (editingQuestionType !== QUESTION_TYPE.multiPartMedia) {
     const oldQ = cat.questions[qi]
@@ -2488,11 +2673,17 @@ function setupEvents(): void {
         }
         case 'mpm-submit-score': {
           if (!activeQ) break
-          const team = data.teams[data.currentTurnIndex]
-          if (!team) break
           const cat = data.categories[activeQ.catIdx]
           const q = cat?.questions[activeQ.qIdx]
           if (!q || q.type !== QUESTION_TYPE.multiPartMedia) break
+
+          if (q.ffa && ffaSelectedTeamIdx !== null) {
+            markFfaMpmResult(ffaSelectedTeamIdx)
+            break
+          }
+
+          const team = data.teams[data.currentTurnIndex]
+          if (!team) break
 
           const checkboxes = document.querySelectorAll<HTMLInputElement>('.mpm-score-row input[type="checkbox"]')
           const correctCount = [...checkboxes].filter((cb) => cb.checked).length
@@ -2523,6 +2714,27 @@ function setupEvents(): void {
           renderSubtitle()
           break
         }
+        case 'ffa-pick-team': {
+          const teamIdx = Number(target.dataset.teamIdx)
+          if (ffaMpmQuestion) {
+            ffaSelectedTeamIdx = teamIdx
+            const picker = document.getElementById('ffa-team-picker')
+            if (picker) picker.remove()
+            const teamEl = $('m-teams')
+            teamEl.textContent = ''
+            const label = document.createElement('div')
+            label.className = 'current-team-label'
+            label.textContent = `${data.teams[teamIdx]?.name ?? ''}'s answer`
+            teamEl.appendChild(label)
+            renderMpmScoring(ffaMpmQuestion, ffaMpmPts)
+          } else {
+            markFfaResult(teamIdx)
+          }
+          break
+        }
+        case 'ffa-nobody':
+          markFfaNobody()
+          break
         default:
           break
       }
