@@ -3603,6 +3603,20 @@ function setupEvents(): void {
       }
 
       if (target.closest('.team-name')) return
+
+      if (data.mode === APP_MODE.play && !activeQ) {
+        const card = target.closest<HTMLElement>('.team-card')
+        if (card && !card.classList.contains('active')) {
+          const idx = Number(card.dataset.team)
+          const team = data.teams[idx]
+          if (team && confirm(`Switch turn to ${team.name}?`)) {
+            data.currentTurnIndex = idx
+            saveData()
+            renderSubtitle()
+            renderScoreboard()
+          }
+        }
+      }
     },
     { signal },
   )
