@@ -39,6 +39,7 @@ type MpmCarouselState = {
   currentIdx: number
   results: MpmPartResult[]
   teamIdx: number | null
+  ffaTeamPerPart: (number | null)[]
 }
 
 let activeQ: ActiveQ | null = null
@@ -817,6 +818,16 @@ function mpmCarouselAdvance(): void {
     if (results[idx] === null) {
       mpmCarousel.currentIdx = idx
       renderMpmSlide(mpmCarousel)
+      if (activeQ) {
+        const cat = data.categories[activeQ.catIdx]
+        const q = cat?.questions[activeQ.qIdx]
+        if (q?.ffa) {
+          $('btn-correct').style.display = 'none'
+          $('btn-wrong').style.display = 'none'
+          $('btn-skip').style.display = 'none'
+          renderFfaTeamPicker()
+        }
+      }
       return
     }
   }
@@ -835,6 +846,9 @@ function renderMpmSummary(): void {
   $('btn-wrong').style.display = 'none'
   $('btn-skip').style.display = 'none'
 
+  const ffaPicker = document.getElementById('ffa-team-picker')
+  if (ffaPicker) ffaPicker.remove()
+
   destroyYoutubePlayer()
   $('m-yt-wrap').style.display = 'none'
 
@@ -848,6 +862,8 @@ function renderMpmSummary(): void {
   heading.className = 'mpm-summary-heading'
   heading.textContent = 'Results'
   summary.appendChild(heading)
+
+  const isFfaMpm = mpmCarousel.ffaTeamPerPart.some((t) => t !== null)
 
   for (const [i, part] of parts.entries()) {
     const row = document.createElement('div')
@@ -863,13 +879,48 @@ function renderMpmSummary(): void {
     text.textContent = `Part ${i + 1}: ${part.answer}`
     row.appendChild(text)
 
+    const teamForPart = mpmCarousel.ffaTeamPerPart[i]
+    if (teamForPart !== null && teamForPart !== undefined) {
+      const teamName = document.createElement('span')
+      teamName.className = 'mpm-summary-team'
+      teamName.textContent = data.teams[teamForPart]?.name ?? ''
+      row.appendChild(teamName)
+    } else if (isFfaMpm) {
+      const noTeam = document.createElement('span')
+      noTeam.className = 'mpm-summary-team mpm-summary-team--nobody'
+      noTeam.textContent = 'Nobody'
+      row.appendChild(noTeam)
+    }
+
     summary.appendChild(row)
   }
 
-  const total = document.createElement('div')
-  total.className = 'mpm-summary-total'
-  total.textContent = `${correctCount} of ${parts.length} correct — ${totalScore} pts`
-  summary.appendChild(total)
+  if (isFfaMpm) {
+    const perPart = Math.floor(pts / parts.length)
+    const teamScores = new Map<number, number>()
+    for (const [i, result] of results.entries()) {
+      if (result !== 'correct') continue
+      const tIdx = mpmCarousel.ffaTeamPerPart[i]
+      if (tIdx === null || tIdx === undefined) continue
+      teamScores.set(tIdx, (teamScores.get(tIdx) ?? 0) + perPart)
+    }
+    const totalEl = document.createElement('div')
+    totalEl.className = 'mpm-summary-total'
+    if (teamScores.size === 0) {
+      totalEl.textContent = `${correctCount} of ${parts.length} correct — 0 pts`
+    } else {
+      const lines = [...teamScores.entries()]
+        .map(([tIdx, score]) => `${data.teams[tIdx]?.name ?? ''}: +${score}`)
+        .join(', ')
+      totalEl.textContent = `${correctCount} of ${parts.length} correct — ${lines}`
+    }
+    summary.appendChild(totalEl)
+  } else {
+    const total = document.createElement('div')
+    total.className = 'mpm-summary-total'
+    total.textContent = `${correctCount} of ${parts.length} correct — ${totalScore} pts`
+    summary.appendChild(total)
+  }
 
   const submitBtn = document.createElement('button')
   submitBtn.type = 'button'
@@ -943,6 +994,7 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
     mpmCarousel = {
       parts: q.parts, pts, currentIdx: 0,
       results: q.parts.map(() => null), teamIdx: null,
+      ffaTeamPerPart: q.parts.map(() => null),
     }
     $('btn-reveal').style.display = 'none'
     $('btn-correct').style.display = 'inline-flex'
@@ -1036,8 +1088,17 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
       $('m-type-content').style.display = ''
 
       if (isMpmCarousel) {
+        mpmCarousel = {
+          parts: q.parts, pts, currentIdx: 0,
+          results: q.parts.map(() => null), teamIdx: null,
+          ffaTeamPerPart: q.parts.map(() => null),
+        }
         $('btn-reveal').style.display = 'none'
+        $('btn-correct').style.display = 'none'
+        $('btn-wrong').style.display = 'none'
         $('btn-skip').style.display = 'none'
+        renderPlayTypeContent(q, $('m-type-content'))
+        renderMpmSlide(mpmCarousel)
         renderFfaTeamPicker()
       } else {
         $('btn-reveal').style.display = 'inline-flex'
@@ -2865,7 +2926,20 @@ function setupEvents(): void {
           const totalParts = mpmCarousel.parts.length
           const pts = scorePartial(mpmCarousel.pts, totalParts, correctCount)
 
-          if (mpmCarousel.teamIdx !== null) {
+          const submitIsFfaMpm = mpmCarousel.ffaTeamPerPart.some((t) => t !== null)
+          if (submitIsFfaMpm) {
+            const perPart = Math.floor(mpmCarousel.pts / totalParts)
+            for (const [i, result] of mpmCarousel.results.entries()) {
+              if (result !== 'correct') continue
+              const tIdx = mpmCarousel.ffaTeamPerPart[i]
+              if (tIdx === null || tIdx === undefined) continue
+              const team = data.teams[tIdx]
+              if (team) team.score += perPart
+            }
+            if (data.playStyle === PLAY_STYLE.classic) {
+              data.currentTurnIndex = (data.currentTurnIndex + 1) % data.teams.length
+            }
+          } else if (mpmCarousel.teamIdx !== null) {
             const team = data.teams[mpmCarousel.teamIdx]
             if (!team) break
             team.score += pts
@@ -2939,11 +3013,8 @@ function setupEvents(): void {
           const cat = data.categories[activeQ.catIdx]
           const q = cat?.questions[activeQ.qIdx]
 
-          if (q?.type === QUESTION_TYPE.multiPartMedia) {
-            mpmCarousel = {
-              parts: q.parts, pts: activeQ.pts, currentIdx: 0,
-              results: q.parts.map(() => null), teamIdx,
-            }
+          if (q?.type === QUESTION_TYPE.multiPartMedia && mpmCarousel) {
+            mpmCarousel.ffaTeamPerPart[mpmCarousel.currentIdx] = teamIdx
             const picker = document.getElementById('ffa-team-picker')
             if (picker) picker.remove()
             const teamEl = $('m-teams')
@@ -2952,19 +3023,27 @@ function setupEvents(): void {
             label.className = 'current-team-label'
             label.textContent = `${data.teams[teamIdx]?.name ?? ''}'s answer`
             teamEl.appendChild(label)
-            renderPlayTypeContent(q, $('m-type-content'))
             $('btn-correct').style.display = 'inline-flex'
             $('btn-wrong').style.display = 'inline-flex'
-            $('btn-skip').style.display = 'inline-flex'
-            renderMpmSlide(mpmCarousel)
+            $('btn-skip').style.display = 'none'
           } else {
             markFfaResult(teamIdx)
           }
           break
         }
-        case 'ffa-nobody':
+        case 'ffa-nobody': {
+          if (mpmCarousel && activeQ) {
+            const nobodyCat = data.categories[activeQ.catIdx]
+            const nobodyQ = nobodyCat?.questions[activeQ.qIdx]
+            if (nobodyQ?.ffa && nobodyQ.type === QUESTION_TYPE.multiPartMedia) {
+              mpmCarousel.results[mpmCarousel.currentIdx] = 'wrong'
+              mpmCarouselAdvance()
+              break
+            }
+          }
           markFfaNobody()
           break
+        }
         case 'steal-pick-target': {
           if (!activeQ) break
           const targetIdx = Number(target.dataset.teamIdx)
@@ -2992,6 +3071,7 @@ function setupEvents(): void {
             mpmCarousel = {
               parts: stealQ.parts, pts: activeQ.pts, currentIdx: 0,
               results: stealQ.parts.map(() => null), teamIdx: null,
+              ffaTeamPerPart: stealQ.parts.map(() => null),
             }
             $('btn-reveal').style.display = 'none'
             $('btn-correct').style.display = 'inline-flex'
