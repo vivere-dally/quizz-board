@@ -1070,6 +1070,8 @@ h1 {
 
 /* ── TEAM SETUP ── */
 .team-setup-modal { max-width: 440px; }
+.confirm-modal { max-width: 380px; text-align: center; }
+.confirm-message { font-size: 1rem; margin-bottom: 20px; color: var(--text-main); }
 
 .ts-field-label {
   display: block;

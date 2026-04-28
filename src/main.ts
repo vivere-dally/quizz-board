@@ -1315,6 +1315,30 @@ function closeQModal(): void {
   if (ffaPicker) ffaPicker.remove()
 }
 
+// ── Confirm Modal ──
+
+function showConfirm(message: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = $('confirm-overlay')
+    const msg = $('confirm-message')
+    const okBtn = $('confirm-ok')
+    const cancelBtn = $('confirm-cancel')
+    msg.textContent = message
+    overlay.style.display = 'flex'
+    okBtn.focus()
+
+    const ac = new AbortController()
+    function close(result: boolean): void {
+      ac.abort()
+      overlay.style.display = 'none'
+      resolve(result)
+    }
+
+    okBtn.addEventListener('click', () => close(true), { signal: ac.signal })
+    cancelBtn.addEventListener('click', () => close(false), { signal: ac.signal })
+  })
+}
+
 // ── Category Edit ──
 
 function editCategory(ci: number): void {
@@ -2499,8 +2523,8 @@ function saveCellEdit(ci: number, qi: number): void {
 
 // ── Reset ──
 
-function resetAll(): void {
-  if (!confirm('Delete all categories and reset the board? This cannot be undone.')) return
+async function resetAll(): Promise<void> {
+  if (!await showConfirm('Delete all categories and reset the board? This cannot be undone.')) return
   data.categories = []
   data.teams = []
   data.used = {}
@@ -2604,10 +2628,10 @@ function addCategory(): void {
   renderAll()
 }
 
-function removeCategory(ci: number): void {
+async function removeCategory(ci: number): Promise<void> {
   const cat = data.categories[ci]
   if (!cat) return
-  if (!confirm(`Remove category "${cat.name}"?`)) return
+  if (!await showConfirm(`Remove category "${cat.name}"?`)) return
   data.categories.splice(ci, 1)
   saveData()
   renderAll()
@@ -2751,8 +2775,8 @@ function startGame(): void {
   switchMode(APP_MODE.play)
 }
 
-function cancelGame(): void {
-  if (!confirm('Cancel the game? All scores will be lost.')) return
+async function cancelGame(): Promise<void> {
+  if (!await showConfirm('Cancel the game? All scores will be lost.')) return
   data.teams = []
   data.used = {}
   data.currentTurnIndex = 0
@@ -3593,7 +3617,7 @@ function setupEvents(): void {
   // Scoreboard delegation
   $('scoreboard').addEventListener(
     'click',
-    (e) => {
+    async (e) => {
       const target = e.target as HTMLElement
 
       const scoreBtn = target.closest<HTMLElement>('[data-action="adjust-score"]')
@@ -3609,7 +3633,7 @@ function setupEvents(): void {
         if (card && !card.classList.contains('active')) {
           const idx = Number(card.dataset.team)
           const team = data.teams[idx]
-          if (team && confirm(`Switch turn to ${team.name}?`)) {
+          if (team && await showConfirm(`Switch turn to ${team.name}?`)) {
             data.currentTurnIndex = idx
             saveData()
             renderSubtitle()
@@ -3695,7 +3719,7 @@ function setupEvents(): void {
   // Board delegation
   $('board').addEventListener(
     'click',
-    (e) => {
+    async (e) => {
       const target = e.target as HTMLElement
 
       if (data.mode === APP_MODE.edit) {
@@ -3716,7 +3740,7 @@ function setupEvents(): void {
           const qi = Number(removeQ.dataset.qi)
           const cat = data.categories[ci]
           if (cat && cat.questions.length > 1) {
-            if (!confirm(`Remove this ${cat.points[qi] ?? 0} pts question?`)) return
+            if (!await showConfirm(`Remove this ${cat.points[qi] ?? 0} pts question?`)) return
             cat.questions.splice(qi, 1)
             cat.points.splice(qi, 1)
             saveData()
