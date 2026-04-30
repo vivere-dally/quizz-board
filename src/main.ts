@@ -534,13 +534,16 @@ function renderCurrentTeamLabel(): void {
 // ── Question Modal ──
 
 function shuffle<T>(arr: readonly T[]): T[] {
+  if (arr.length <= 1) return [...arr]
   const out = [...arr]
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    const tmp = out[i]!
-    out[i] = out[j]!
-    out[j] = tmp
-  }
+  do {
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const tmp = out[i]!
+      out[i] = out[j]!
+      out[j] = tmp
+    }
+  } while (out.every((v, i) => v === arr[i]))
   return out
 }
 
@@ -697,7 +700,7 @@ function revealPlayTypeContent(q: Question, container: HTMLElement): void {
       list.textContent = ''
       for (const [i, ordItem] of q.items.entries()) {
         const card = document.createElement('div')
-        card.className = 'play-ord-item correct'
+        card.className = 'play-ord-item'
         const num = document.createElement('span')
         num.className = 'play-ord-num'
         num.textContent = `${i + 1}.`
