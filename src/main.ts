@@ -212,7 +212,8 @@ function createYoutubePlayer(containerId: string, videoId: string, startSeconds?
         fs: 0,
       },
       events: {
-        onReady: () => {
+        onReady: (event: YT.PlayerEvent) => {
+          event.target.setVolume(100)
           if (autoplay) {
             ytPlaying = true
             updatePlayButton()
@@ -640,10 +641,6 @@ function renderPlayTypeContent(q: Question, container: HTMLElement): void {
       slide.className = 'play-mpm-slide'
       carousel.appendChild(slide)
 
-      const slideLabel = document.createElement('div')
-      slideLabel.className = 'play-mpm-slide-label'
-      carousel.appendChild(slideLabel)
-
       container.appendChild(carousel)
       break
     }
@@ -751,11 +748,6 @@ function renderMpmSlide(state: MpmCarouselState): void {
   if (progress) {
     progress.textContent = ''
 
-    const label = document.createElement('span')
-    label.className = 'play-mpm-progress-label'
-    label.textContent = `Part ${state.currentIdx + 1} of ${state.parts.length}`
-    progress.appendChild(label)
-
     const correctSoFar = state.results.filter((r) => r === 'correct').length
     const perPart = Math.floor(state.pts / state.parts.length)
     const scoreInfo = document.createElement('span')
@@ -801,8 +793,6 @@ function renderMpmSlide(state: MpmCarouselState): void {
     slide.appendChild(ytBtn)
   }
 
-  const slideLabel = carousel.querySelector('.play-mpm-slide-label')
-  if (slideLabel) slideLabel.textContent = `Part ${state.currentIdx + 1}`
 }
 
 function mpmCarouselJudge(result: MpmPartResult): void {

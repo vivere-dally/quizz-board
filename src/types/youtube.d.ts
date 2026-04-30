@@ -8,6 +8,8 @@ declare namespace YT {
     seekTo(seconds: number, allowSeekAhead: boolean): void
     getCurrentTime(): number
     getDuration(): number
+    setVolume(volume: number): void
+    getVolume(): number
   }
 
   type PlayerOptions = {

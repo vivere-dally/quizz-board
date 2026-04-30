@@ -593,14 +593,52 @@ h1 {
   z-index: 1;
 }
 
-#q-modal .modal-pts { font-size: 4.5rem; }
-#q-modal .q-display { font-size: 1.6rem; margin-bottom: 32px; }
-#q-modal .a-display { font-size: 1.25rem; padding: 18px 28px; }
+#q-modal > #m-type-content { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+#q-modal .modal-header-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+#q-modal .modal-pts { font-size: 5rem; margin-bottom: 0; }
+#q-modal .modal-cat { font-size: 14px; letter-spacing: 0.14em; margin-bottom: 0; }
+#q-modal .q-display { font-size: 2rem; margin-bottom: 16px; }
+#q-modal .a-display { font-size: 1.4rem; padding: 20px 32px; }
 
-#q-modal .q-image-wrap { max-height: 55vh; }
-#q-modal .q-image-wrap img { max-height: 55vh; }
+#q-modal .q-image-wrap {
+  max-height: none;
+  flex: 1 1 0;
+  min-height: 200px;
+}
+#q-modal .q-image-wrap img {
+  max-height: 100%;
+  width: 100%;
+  object-fit: contain;
+}
+#q-modal .q-yt-wrap { margin-bottom: 28px; }
 
-#q-modal .modal-btn { font-size: 15px; padding: 13px 28px; }
+#q-modal .current-team-label { font-size: 1.6rem; }
+#q-modal .current-team-streak-info { font-size: 1rem; }
+#q-modal .modal-btn { font-size: 16px; padding: 14px 32px; }
+
+#q-modal .play-mc-options { gap: 10px; }
+#q-modal .play-mc-option { padding: 16px 24px; font-size: 1.15rem; }
+#q-modal .play-mc-letter { font-size: 1.15rem; width: 32px; height: 32px; line-height: 32px; }
+#q-modal .play-tf-option { font-size: 1.4rem; padding: 16px 36px; }
+#q-modal .play-ord-item { padding: 14px 20px; font-size: 1.1rem; }
+#q-modal .play-ord-num { font-size: 1.1rem; width: 28px; }
+#q-modal .play-ord-item-img { max-height: 160px; }
+#q-modal .play-numeric-prompt { font-size: 1.15rem; }
+
+#q-modal .play-mpm-score-info { font-size: 1rem; }
+#q-modal .play-mpm-dots { gap: 8px; }
+#q-modal .play-mpm-dot { width: 14px; height: 14px; }
+#q-modal .play-mpm-carousel { flex: 1 1 0; min-height: 0; }
+#q-modal .play-mpm-slide { min-height: 0; flex: 1 1 0; gap: 16px; }
+#q-modal .play-mpm-slide-img { max-height: 100%; max-width: 100%; object-fit: contain; flex: 1 1 0; min-height: 0; }
+#q-modal .play-mpm-yt-btn { width: 70px; height: 70px; font-size: 2rem; }
+#q-modal .mpm-summary-heading { font-size: 1.5rem; }
+#q-modal .mpm-summary-row { font-size: 1rem; }
 
 .modal-pts {
   font-family: 'Bebas Neue', sans-serif;
@@ -1639,15 +1677,8 @@ h1 {
 
 .play-mpm-progress {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-}
-
-.play-mpm-progress-label {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: 1.1rem;
-  color: var(--text-muted);
+  gap: 14px;
 }
 
 .play-mpm-score-info {
@@ -1689,12 +1720,6 @@ h1 {
   max-height: 300px;
   object-fit: contain;
   border-radius: 8px;
-}
-
-.play-mpm-slide-label {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: 1rem;
-  color: var(--text-muted);
 }
 
 .play-mpm-yt-btn {
@@ -1915,8 +1940,13 @@ h1 {
     max-height: calc(100vh - 12px);
     border-radius: 12px;
   }
+  #q-modal .modal-header-row { gap: 10px; margin-bottom: 14px; }
   #q-modal .modal-pts { font-size: 3rem; }
-  #q-modal .q-display { font-size: 1.15rem; }
-  #q-modal .q-image-wrap,
-  #q-modal .q-image-wrap img { max-height: 40vh; }
+  #q-modal .modal-cat { font-size: 11px; }
+  #q-modal .q-display { font-size: 1.15rem; margin-bottom: 14px; }
+  #q-modal .a-display { font-size: 1.1rem; padding: 14px 20px; }
+  #q-modal .q-image-wrap { min-height: 120px; }
+  #q-modal .current-team-label { font-size: 1.2rem; }
+  #q-modal .modal-btn { font-size: 14px; padding: 11px 22px; }
+  #q-modal .play-mc-option { padding: 10px 14px; font-size: 1rem; }
 }
