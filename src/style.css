@@ -603,6 +603,13 @@ h1 {
 #q-modal .modal-pts { font-size: 5rem; margin-bottom: 0; }
 #q-modal .modal-cat { font-size: 14px; letter-spacing: 0.14em; margin-bottom: 0; }
 #q-modal .q-display { font-size: 2rem; margin-bottom: 16px; }
+#q-modal.q-centered .q-display {
+  margin-block: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#q-modal.q-centered > #m-type-content { flex: 0; }
 #q-modal .a-display { font-size: 1.4rem; padding: 20px 32px; }
 
 #q-modal .q-image-wrap {

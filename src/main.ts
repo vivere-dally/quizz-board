@@ -982,6 +982,9 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
     ytWrap.style.display = 'none'
   }
 
+  const shouldCenter = !q.media && q.type === QUESTION_TYPE.open && !q.ffa && !cat.steal
+  modal.classList.toggle('q-centered', shouldCenter)
+
   const isMpmCarousel = q.type === QUESTION_TYPE.multiPartMedia
   if (isMpmCarousel && !q.ffa && !cat.steal) {
     mpmCarousel = {
