@@ -1,6 +1,7 @@
 import { openDB } from 'idb'
+import { z } from 'zod'
 
-// ── Types ──
+// ── Scalar enums ──
 
 export const CATEGORY_COLOR = {
   blue: 'blue',
@@ -33,66 +34,173 @@ export type QuestionType = (typeof QUESTION_TYPE)[keyof typeof QUESTION_TYPE]
 export const MEDIA_TYPE = { image: 'image', youtube: 'youtube' } as const
 export type MediaType = (typeof MEDIA_TYPE)[keyof typeof MEDIA_TYPE]
 
-export type ImageMedia = { type: typeof MEDIA_TYPE.image; src: string }
-export type YoutubeMedia = { type: typeof MEDIA_TYPE.youtube; videoId: string; startSeconds?: number; endSeconds?: number }
-export type QuestionMedia = ImageMedia | YoutubeMedia
+export type QuizId = string & { readonly __brand: 'QuizId' }
 
-type QuestionBase = {
-  q: string
-  media?: QuestionMedia
-  x2?: boolean
-  ffa?: boolean
+// ── Schemas ──
+//
+// Zod is the single source of runtime validation; every domain type below is
+// `z.infer`red from its schema so the shape and the validator can't drift.
+// `z.object` strips unknown keys, which subsumes the old `delete q.img/audio`
+// cleanup for free. Scalar unions and the branded `QuizId` stay hand-written:
+// `z.enum(CONST)` re-derives the same literal union, and `z.custom<QuizId>`
+// carries our brand rather than Zod's `.brand()` shape.
+
+const imageMediaSchema = z.object({
+  type: z.literal(MEDIA_TYPE.image),
+  src: z.string().min(1),
+})
+export type ImageMedia = z.infer<typeof imageMediaSchema>
+
+const youtubeMediaSchema = z.object({
+  type: z.literal(MEDIA_TYPE.youtube),
+  videoId: z.string().min(1),
+  startSeconds: z.number().optional(),
+  endSeconds: z.number().optional(),
+})
+export type YoutubeMedia = z.infer<typeof youtubeMediaSchema>
+
+const questionMediaSchema = z.discriminatedUnion('type', [imageMediaSchema, youtubeMediaSchema])
+export type QuestionMedia = z.infer<typeof questionMediaSchema>
+
+const questionBaseFields = {
+  q: z.string(),
+  media: questionMediaSchema.optional(),
+  x2: z.boolean().optional(),
+  ffa: z.boolean().optional(),
 }
 
-export type OpenQuestion = QuestionBase & {
-  type: typeof QUESTION_TYPE.open
-  a: string
+const openQuestionSchema = z.object({
+  ...questionBaseFields,
+  type: z.literal(QUESTION_TYPE.open),
+  a: z.string(),
+})
+export type OpenQuestion = z.infer<typeof openQuestionSchema>
+
+const multipleChoiceQuestionSchema = z.object({
+  ...questionBaseFields,
+  type: z.literal(QUESTION_TYPE.multipleChoice),
+  options: z.array(z.string()).min(2),
+  correctIndex: z.number(),
+})
+export type MultipleChoiceQuestion = z.infer<typeof multipleChoiceQuestionSchema>
+
+const trueFalseQuestionSchema = z.object({
+  ...questionBaseFields,
+  type: z.literal(QUESTION_TYPE.trueFalse),
+  correctAnswer: z.boolean(),
+})
+export type TrueFalseQuestion = z.infer<typeof trueFalseQuestionSchema>
+
+const orderingItemSchema = z.object({
+  label: z.string(),
+  media: questionMediaSchema.optional(),
+})
+export type OrderingItem = z.infer<typeof orderingItemSchema>
+
+const orderingQuestionSchema = z.object({
+  ...questionBaseFields,
+  type: z.literal(QUESTION_TYPE.ordering),
+  items: z.array(orderingItemSchema).min(2),
+})
+export type OrderingQuestion = z.infer<typeof orderingQuestionSchema>
+
+const numericQuestionSchema = z.object({
+  ...questionBaseFields,
+  type: z.literal(QUESTION_TYPE.numeric),
+  correctValue: z.number(),
+  unit: z.string().optional(),
+})
+export type NumericQuestion = z.infer<typeof numericQuestionSchema>
+
+const multiPartMediaPartSchema = z.object({
+  media: questionMediaSchema,
+  answer: z.string(),
+})
+export type MultiPartMediaPart = z.infer<typeof multiPartMediaPartSchema>
+
+const multiPartMediaQuestionSchema = z.object({
+  ...questionBaseFields,
+  type: z.literal(QUESTION_TYPE.multiPartMedia),
+  parts: z.array(multiPartMediaPartSchema).min(1),
+})
+export type MultiPartMediaQuestion = z.infer<typeof multiPartMediaQuestionSchema>
+
+const VALID_QUESTION_TYPES = new Set<string>(Object.values(QUESTION_TYPE))
+
+// Forward-migrations of pre-v5 stored question shapes, run as the question
+// schema's pre-parse step so it stays inside Zod's coverage: unknown/missing
+// `type` becomes `open`, legacy `img` moves to `media`, ordering items stored
+// as plain strings become `{ label }`. Legacy `img`/`audio` keys are dropped by
+// `z.object`'s strip, so no explicit delete is needed.
+function migrateQuestion(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw
+  const q: Record<string, unknown> = { ...(raw as Record<string, unknown>) }
+
+  if (typeof q.type !== 'string' || !VALID_QUESTION_TYPES.has(q.type)) {
+    q.type = QUESTION_TYPE.open
+  }
+  if (typeof q.img === 'string' && q.img.length > 0 && q.media === undefined) {
+    q.media = { type: MEDIA_TYPE.image, src: q.img }
+  }
+  if (q.type === QUESTION_TYPE.ordering && Array.isArray(q.items)) {
+    q.items = q.items.map((item: unknown) => (typeof item === 'string' ? { label: item } : item))
+  }
+  return q
 }
 
-export type MultipleChoiceQuestion = QuestionBase & {
-  type: typeof QUESTION_TYPE.multipleChoice
-  options: string[]
-  correctIndex: number
+const questionSchema = z
+  .preprocess(migrateQuestion, z.discriminatedUnion('type', [
+    openQuestionSchema,
+    multipleChoiceQuestionSchema,
+    trueFalseQuestionSchema,
+    orderingQuestionSchema,
+    numericQuestionSchema,
+    multiPartMediaQuestionSchema,
+  ]))
+  // cross-field bound: correctIndex must point at a real option
+  .refine((q) => q.type !== QUESTION_TYPE.multipleChoice || (q.correctIndex >= 0 && q.correctIndex < q.options.length))
+export type Question = z.infer<typeof questionSchema>
+
+export const categorySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  color: z.enum(CATEGORY_COLOR),
+  steal: z.boolean().optional(),
+  points: z.array(z.number()),
+  questions: z.array(questionSchema),
+})
+export type Category = z.infer<typeof categorySchema>
+
+const teamSchema = z.object({
+  name: z.string(),
+  score: z.number(),
+  // pre-streak-feature records lack `streak`; default it rather than reject
+  streak: z.number().catch(0),
+})
+export type Team = z.infer<typeof teamSchema>
+
+const quizSchema = z.object({
+  id: z.custom<QuizId>((v) => typeof v === 'string'),
+  name: z.string(),
+  updatedAt: z.number(),
+  mode: z.enum(APP_MODE),
+  // invalid/missing round config falls back instead of dropping the quiz
+  playStyle: z.enum(PLAY_STYLE).catch(PLAY_STYLE.classic),
+  categories: z.array(categorySchema),
+  teams: z.array(teamSchema),
+  used: z.record(z.string(), z.boolean()),
+  currentTurnIndex: z.number().catch(0),
+})
+export type Quiz = z.infer<typeof quizSchema>
+
+export type QuizMeta = {
+  id: QuizId
+  name: string
+  updatedAt: number
+  questionCount: number
 }
 
-export type TrueFalseQuestion = QuestionBase & {
-  type: typeof QUESTION_TYPE.trueFalse
-  correctAnswer: boolean
-}
-
-export type OrderingItem = {
-  label: string
-  media?: QuestionMedia
-}
-
-export type OrderingQuestion = QuestionBase & {
-  type: typeof QUESTION_TYPE.ordering
-  items: OrderingItem[]
-}
-
-export type NumericQuestion = QuestionBase & {
-  type: typeof QUESTION_TYPE.numeric
-  correctValue: number
-  unit?: string
-}
-
-export type MultiPartMediaPart = {
-  media: QuestionMedia
-  answer: string
-}
-
-export type MultiPartMediaQuestion = QuestionBase & {
-  type: typeof QUESTION_TYPE.multiPartMedia
-  parts: MultiPartMediaPart[]
-}
-
-export type Question =
-  | OpenQuestion
-  | MultipleChoiceQuestion
-  | TrueFalseQuestion
-  | OrderingQuestion
-  | NumericQuestion
-  | MultiPartMediaQuestion
+// ── Question helpers ──
 
 export const DEFAULT_QUESTION_TEXT = 'Write your question'
 export const DEFAULT_ANSWER_TEXT = 'Write your answer'
@@ -122,42 +230,6 @@ export function answerDisplayText(q: Question): string {
       throw new Error(`unreachable: unknown question type ${(_exhaustive as Question).type}`)
     }
   }
-}
-
-export type Category = {
-  id: string
-  name: string
-  color: CategoryColor
-  steal?: boolean
-  points: number[]
-  questions: Question[]
-}
-
-export type Team = {
-  name: string
-  score: number
-  streak: number
-}
-
-export type QuizId = string & { readonly __brand: 'QuizId' }
-
-export type Quiz = {
-  id: QuizId
-  name: string
-  updatedAt: number
-  mode: AppMode
-  playStyle: PlayStyle
-  categories: Category[]
-  teams: Team[]
-  used: Record<string, boolean>
-  currentTurnIndex: number
-}
-
-export type QuizMeta = {
-  id: QuizId
-  name: string
-  updatedAt: number
-  questionCount: number
 }
 
 export const DEFAULT_QUIZ_NAME = 'My quiz'
@@ -202,10 +274,10 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
       // structural — content validation stays at read time (parseQuiz), so a
       // corrupt legacy record degrades exactly as it did before: fresh seed.
       const meta = tx.objectStore(META_STORE)
-      const legacy: unknown = await meta.get(LEGACY_DOC_KEY)
-      if (isRecord(legacy)) {
+      const legacy = z.looseObject({}).safeParse(await meta.get(LEGACY_DOC_KEY))
+      if (legacy.success) {
         const id = newQuizId()
-        await tx.objectStore(QUIZ_STORE).put({ ...legacy, id, name: DEFAULT_QUIZ_NAME, updatedAt: Date.now() })
+        await tx.objectStore(QUIZ_STORE).put({ ...legacy.data, id, name: DEFAULT_QUIZ_NAME, updatedAt: Date.now() })
         await meta.put(id, ACTIVE_QUIZ_KEY)
       }
       await meta.delete(LEGACY_DOC_KEY)
@@ -215,127 +287,9 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
 
 // ── Validation ──
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
-
-const VALID_COLORS = new Set<string>(Object.values(CATEGORY_COLOR))
-const VALID_MODES = new Set<string>(Object.values(APP_MODE))
-const VALID_PLAY_STYLES = new Set<string>(Object.values(PLAY_STYLE))
-const VALID_QUESTION_TYPES = new Set<string>(Object.values(QUESTION_TYPE))
-
-function isValidMedia(m: unknown): boolean {
-  if (!isRecord(m)) return false
-  switch (m.type) {
-    case MEDIA_TYPE.image:
-      return typeof m.src === 'string' && m.src.length > 0
-    case MEDIA_TYPE.youtube:
-      return typeof m.videoId === 'string' && m.videoId.length > 0
-        && (m.startSeconds === undefined || typeof m.startSeconds === 'number')
-        && (m.endSeconds === undefined || typeof m.endSeconds === 'number')
-    default:
-      return false
-  }
-}
-
-function isValidQuestion(q: unknown): boolean {
-  if (!isRecord(q)) return false
-  if (typeof q.q !== 'string') return false
-  if ('media' in q && q.media !== undefined && !isValidMedia(q.media)) return false
-  if ('x2' in q && q.x2 !== undefined && typeof q.x2 !== 'boolean') return false
-  if ('ffa' in q && q.ffa !== undefined && typeof q.ffa !== 'boolean') return false
-
-  switch (q.type) {
-    case QUESTION_TYPE.open:
-      return typeof q.a === 'string'
-    case QUESTION_TYPE.multipleChoice:
-      return Array.isArray(q.options)
-        && q.options.length >= 2
-        && q.options.every((o: unknown) => typeof o === 'string')
-        && typeof q.correctIndex === 'number'
-        && q.correctIndex >= 0
-        && q.correctIndex < q.options.length
-    case QUESTION_TYPE.trueFalse:
-      return typeof q.correctAnswer === 'boolean'
-    case QUESTION_TYPE.ordering:
-      return Array.isArray(q.items)
-        && q.items.length >= 2
-        && q.items.every((item: unknown) =>
-          typeof item === 'string'
-          || (isRecord(item) && typeof item.label === 'string'
-            && (!('media' in item) || item.media === undefined || isValidMedia(item.media)))
-        )
-    case QUESTION_TYPE.numeric:
-      return typeof q.correctValue === 'number'
-    case QUESTION_TYPE.multiPartMedia:
-      return Array.isArray(q.parts) && q.parts.length >= 1
-        && q.parts.every((p: unknown) => isRecord(p) && typeof p.answer === 'string' && isValidMedia(p.media))
-    default:
-      return false
-  }
-}
-
-function normalizeQuiz(value: unknown): void {
-  if (!isRecord(value)) return
-
-  if (typeof value.currentTurnIndex !== 'number') value.currentTurnIndex = 0
-  if (typeof value.playStyle !== 'string' || !VALID_PLAY_STYLES.has(value.playStyle)) value.playStyle = PLAY_STYLE.classic
-
-  if (Array.isArray(value.teams)) {
-    for (const team of value.teams) {
-      if (isRecord(team) && typeof team.streak !== 'number') team.streak = 0
-    }
-  }
-
-  if (!Array.isArray(value.categories)) return
-  for (const cat of value.categories) {
-    if (!isRecord(cat) || !Array.isArray(cat.questions)) continue
-    for (const q of cat.questions) {
-      if (!isRecord(q)) continue
-      if (!('type' in q) || !VALID_QUESTION_TYPES.has(q.type as string)) {
-        q.type = QUESTION_TYPE.open
-      }
-      if ('img' in q && typeof q.img === 'string' && q.img && !('media' in q)) {
-        q.media = { type: MEDIA_TYPE.image, src: q.img }
-      }
-      delete q.img
-      delete q.audio
-      if (q.type === QUESTION_TYPE.ordering && Array.isArray(q.items)) {
-        q.items = q.items.map((item: unknown) => typeof item === 'string' ? { label: item } : item)
-      }
-    }
-  }
-}
-
-function isQuiz(value: unknown): value is Quiz {
-  if (!isRecord(value)) return false
-  if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.updatedAt !== 'number') return false
-  if (typeof value.mode !== 'string' || !VALID_MODES.has(value.mode)) return false
-  if (typeof value.playStyle !== 'string' || !VALID_PLAY_STYLES.has(value.playStyle)) return false
-  if (!Array.isArray(value.categories) || !Array.isArray(value.teams) || !isRecord(value.used) || typeof value.currentTurnIndex !== 'number') return false
-
-  for (const cat of value.categories) {
-    if (!isRecord(cat)) return false
-    if (typeof cat.id !== 'string') return false
-    if (typeof cat.name !== 'string') return false
-    if (typeof cat.color !== 'string' || !VALID_COLORS.has(cat.color)) return false
-    if (!Array.isArray(cat.points) || !Array.isArray(cat.questions)) return false
-    for (const q of cat.questions) {
-      if (!isValidQuestion(q)) return false
-    }
-  }
-
-  for (const team of value.teams) {
-    if (!isRecord(team)) return false
-    if (typeof team.name !== 'string' || typeof team.score !== 'number' || typeof team.streak !== 'number') return false
-  }
-
-  return true
-}
-
 function parseQuiz(raw: unknown): Quiz | undefined {
-  normalizeQuiz(raw)
-  return isQuiz(raw) ? raw : undefined
+  const result = quizSchema.safeParse(raw)
+  return result.success ? result.data : undefined
 }
 
 // ── Persistence ──
@@ -374,9 +328,9 @@ export async function saveQuiz(quiz: Quiz): Promise<void> {
     await db.put(QUIZ_STORE, quiz)
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === 'QuotaExceededError') {
-      showPersistenceError('Storage full — changes may not be saved.')
+      showToast('Storage full — changes may not be saved.', TOAST_VARIANT.error)
     } else {
-      showPersistenceError('Failed to save — changes may be lost on refresh.')
+      showToast('Failed to save — changes may be lost on refresh.', TOAST_VARIANT.error)
     }
   }
 }
@@ -386,7 +340,7 @@ export async function deleteQuiz(id: QuizId): Promise<void> {
     const db = await dbPromise
     await db.delete(QUIZ_STORE, id)
   } catch {
-    showPersistenceError('Failed to delete — changes may be lost on refresh.')
+    showToast('Failed to delete — changes may be lost on refresh.', TOAST_VARIANT.error)
   }
 }
 
@@ -406,22 +360,29 @@ export async function setActiveQuizId(id: QuizId): Promise<void> {
     const db = await dbPromise
     await db.put(META_STORE, id, ACTIVE_QUIZ_KEY)
   } catch {
-    showPersistenceError('Failed to save — changes may be lost on refresh.')
+    showToast('Failed to save — changes may be lost on refresh.', TOAST_VARIANT.error)
   }
 }
 
-// ── Error Toast ──
+// ── Status Toast ──
 
 const TOAST_ID = 'persistence-toast'
 
-function showPersistenceError(message: string): void {
+export const TOAST_VARIANT = { error: 'error', success: 'success' } as const
+export type ToastVariant = (typeof TOAST_VARIANT)[keyof typeof TOAST_VARIANT]
+
+export function showToast(message: string, variant: ToastVariant): void {
   let toast = document.getElementById(TOAST_ID)
   if (!toast) {
     toast = document.createElement('div')
     toast.id = TOAST_ID
     toast.className = 'persistence-toast'
+    // async status must reach screen readers, not just flash visually
+    toast.setAttribute('role', 'status')
+    toast.setAttribute('aria-live', 'polite')
     document.body.appendChild(toast)
   }
+  toast.classList.toggle('persistence-toast--success', variant === TOAST_VARIANT.success)
   toast.textContent = message
   toast.classList.add('visible')
 

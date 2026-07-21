@@ -1,6 +1,7 @@
 import './style.css'
-import { APP_MODE, PLAY_STYLE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, DEFAULT_QUESTION_TEXT, DEFAULT_QUIZ_NAME, createQuiz, listQuizzes, loadQuiz, saveQuiz, deleteQuiz, getActiveQuizId, setActiveQuizId, defaultQuestion, answerDisplayText } from './persistence/db.ts'
+import { APP_MODE, PLAY_STYLE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, TOAST_VARIANT, DEFAULT_QUESTION_TEXT, DEFAULT_QUIZ_NAME, createQuiz, listQuizzes, loadQuiz, saveQuiz, deleteQuiz, getActiveQuizId, setActiveQuizId, defaultQuestion, answerDisplayText, showToast } from './persistence/db.ts'
 import type { Quiz, QuizId, CategoryColor, Question, QuestionType, QuestionMedia, MultiPartMediaPart, OrderingItem, Team } from './persistence/db.ts'
+import { buildExportFile, parseExportFile } from './persistence/quiz-transfer.ts'
 import { scoreCorrect, scoreWrong, nextCorrectPreview, streakBonusFor, scorePartial } from './lib/scoring.ts'
 
 type ActiveQ = {
@@ -2825,12 +2826,21 @@ async function openQuizManager(): Promise<void> {
   list.appendChild(frag)
   content.appendChild(list)
 
-  const addBtn = document.createElement('button')
-  addBtn.type = 'button'
-  addBtn.className = 'edit-add-btn'
-  addBtn.textContent = '+ New Quiz'
-  addBtn.dataset.action = 'new-quiz'
-  content.appendChild(addBtn)
+  const footer = document.createElement('div')
+  footer.className = 'quiz-manager-footer'
+  for (const [label, action] of [
+    ['+ New Quiz', 'new-quiz'],
+    ['⇩ Export All', 'export-quizzes'],
+    ['⇧ Import', 'import-quizzes'],
+  ] as const) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'edit-add-btn'
+    btn.textContent = label
+    btn.dataset.action = action
+    footer.appendChild(btn)
+  }
+  content.appendChild(footer)
 
   $('quiz-manager-overlay').style.display = 'flex'
 
@@ -2927,6 +2937,74 @@ function startInlineRename(row: HTMLElement, id: QuizId, currentName: string): v
   }, { signal: ac.signal })
 
   input.addEventListener('blur', () => { commit() }, { signal: ac.signal })
+}
+
+async function handleExportQuizzes(): Promise<void> {
+  const metas = await listQuizzes()
+  const quizzes: Quiz[] = []
+  for (const m of metas) {
+    const quiz = await loadQuiz(m.id)
+    if (quiz) quizzes.push(quiz)
+  }
+
+  const json = JSON.stringify(buildExportFile(quizzes), null, 2)
+  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `quizboard-quizzes-${new Date().toISOString().slice(0, 10)}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function resolveImportName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name
+  const dated = `${name} (imported ${new Date().toISOString().slice(0, 10)})`
+  if (!taken.has(dated)) return dated
+  // taken is finite, so a free suffix always exists within this bound
+  for (let i = 2; i <= taken.size + 2; i++) {
+    const candidate = `${dated} (${i})`
+    if (!taken.has(candidate)) return candidate
+  }
+  throw new Error('unreachable: no free import name within bound')
+}
+
+function handleImportQuizzes(): void {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json,application/json'
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0]
+    if (!file) return
+
+    let raw: unknown
+    try {
+      raw = JSON.parse(await file.text())
+    } catch {
+      showToast('File is corrupted or not a valid export.', TOAST_VARIANT.error)
+      return
+    }
+
+    const result = parseExportFile(raw)
+    if (result.status === 'error') {
+      showToast(result.message, TOAST_VARIANT.error)
+      return
+    }
+
+    const claimed = new Set((await listQuizzes()).map((m) => m.name))
+    for (const exported of result.quizzes) {
+      const name = resolveImportName(exported.name, claimed)
+      claimed.add(name)
+      const quiz = createQuiz(name)
+      quiz.playStyle = exported.playStyle
+      quiz.categories = exported.categories
+      await saveQuiz(quiz)
+    }
+
+    await openQuizManager()
+    const n = result.quizzes.length
+    showToast(`Imported ${n} quiz${n === 1 ? '' : 'zes'}`, TOAST_VARIANT.success)
+  }, { once: true })
+  input.click()
 }
 
 // ── Winner ──
@@ -3779,6 +3857,14 @@ function setupEvents(): void {
 
       if (target.dataset.action === 'new-quiz') {
         handleNewQuiz()
+        return
+      }
+      if (target.dataset.action === 'export-quizzes') {
+        handleExportQuizzes()
+        return
+      }
+      if (target.dataset.action === 'import-quizzes') {
+        handleImportQuizzes()
         return
       }
 

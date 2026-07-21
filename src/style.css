@@ -1160,6 +1160,9 @@ h1 {
 
 .quiz-list { display: flex; flex-direction: column; margin-bottom: 12px; }
 
+.quiz-manager-footer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.quiz-manager-footer .edit-add-btn { margin-top: 0; }
+
 .quiz-row {
   display: flex;
   align-items: center;
@@ -1864,6 +1867,12 @@ h1 {
 .persistence-toast.visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+.persistence-toast--success {
+  background: #0f2410;
+  border-color: #228833;
+  color: #88ffaa;
 }
 
 ::-webkit-scrollbar-track { background: #0a1628; }
