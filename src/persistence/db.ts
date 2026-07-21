@@ -139,7 +139,12 @@ export type Team = {
   streak: number
 }
 
-export type AppData = {
+export type QuizId = string & { readonly __brand: 'QuizId' }
+
+export type Quiz = {
+  id: QuizId
+  name: string
+  updatedAt: number
   mode: AppMode
   playStyle: PlayStyle
   categories: Category[]
@@ -148,17 +153,62 @@ export type AppData = {
   currentTurnIndex: number
 }
 
+export type QuizMeta = {
+  id: QuizId
+  name: string
+  updatedAt: number
+  questionCount: number
+}
+
+export const DEFAULT_QUIZ_NAME = 'My quiz'
+
+export function newQuizId(): QuizId {
+  // cast applies the brand at the only place ids are minted
+  return crypto.randomUUID() as QuizId
+}
+
+export function createQuiz(name: string): Quiz {
+  return {
+    id: newQuizId(),
+    name,
+    updatedAt: Date.now(),
+    mode: APP_MODE.edit,
+    playStyle: PLAY_STYLE.classic,
+    categories: [],
+    teams: [],
+    used: {},
+    currentTurnIndex: 0,
+  }
+}
+
 // ── Database ──
 
 const DB_NAME = 'quizboard'
-const DB_VERSION = 4
-const STORE_NAME = 'app'
-const DOC_KEY = 'current'
+const DB_VERSION = 5
+const META_STORE = 'app'
+const QUIZ_STORE = 'quizzes'
+const ACTIVE_QUIZ_KEY = 'activeQuizId'
+const LEGACY_DOC_KEY = 'current'
 
 const dbPromise = openDB(DB_NAME, DB_VERSION, {
-  upgrade(db, oldVersion) {
+  async upgrade(db, oldVersion, _newVersion, tx) {
+    // versions 2-4 changed data shapes only (handled at read time), never the schema
     if (oldVersion < 1) {
-      db.createObjectStore(STORE_NAME)
+      db.createObjectStore(META_STORE)
+    }
+    if (oldVersion < 5) {
+      db.createObjectStore(QUIZ_STORE, { keyPath: 'id' })
+      // Wrap the legacy single-document record into the first Quiz. Purely
+      // structural — content validation stays at read time (parseQuiz), so a
+      // corrupt legacy record degrades exactly as it did before: fresh seed.
+      const meta = tx.objectStore(META_STORE)
+      const legacy: unknown = await meta.get(LEGACY_DOC_KEY)
+      if (isRecord(legacy)) {
+        const id = newQuizId()
+        await tx.objectStore(QUIZ_STORE).put({ ...legacy, id, name: DEFAULT_QUIZ_NAME, updatedAt: Date.now() })
+        await meta.put(id, ACTIVE_QUIZ_KEY)
+      }
+      await meta.delete(LEGACY_DOC_KEY)
     }
   },
 })
@@ -225,7 +275,7 @@ function isValidQuestion(q: unknown): boolean {
   }
 }
 
-function normalizeAppData(value: unknown): void {
+function normalizeQuiz(value: unknown): void {
   if (!isRecord(value)) return
 
   if (typeof value.currentTurnIndex !== 'number') value.currentTurnIndex = 0
@@ -257,8 +307,9 @@ function normalizeAppData(value: unknown): void {
   }
 }
 
-function isAppData(value: unknown): value is AppData {
+function isQuiz(value: unknown): value is Quiz {
   if (!isRecord(value)) return false
+  if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.updatedAt !== 'number') return false
   if (typeof value.mode !== 'string' || !VALID_MODES.has(value.mode)) return false
   if (typeof value.playStyle !== 'string' || !VALID_PLAY_STYLES.has(value.playStyle)) return false
   if (!Array.isArray(value.categories) || !Array.isArray(value.teams) || !isRecord(value.used) || typeof value.currentTurnIndex !== 'number') return false
@@ -282,31 +333,80 @@ function isAppData(value: unknown): value is AppData {
   return true
 }
 
+function parseQuiz(raw: unknown): Quiz | undefined {
+  normalizeQuiz(raw)
+  return isQuiz(raw) ? raw : undefined
+}
+
 // ── Persistence ──
 
-export async function loadAppData(): Promise<AppData | undefined> {
+export async function listQuizzes(): Promise<QuizMeta[]> {
   try {
     const db = await dbPromise
-    const raw: unknown = await db.get(STORE_NAME, DOC_KEY)
-    if (!raw) return undefined
-    normalizeAppData(raw)
-    if (!isAppData(raw)) return undefined
-    return raw
+    // TODO(perf): getAll deserializes full quizzes (incl. base64 images) just to list names
+    const raws: unknown[] = await db.getAll(QUIZ_STORE)
+    const metas: QuizMeta[] = []
+    for (const raw of raws) {
+      const quiz = parseQuiz(raw)
+      if (!quiz) continue
+      const questionCount = quiz.categories.reduce((sum, cat) => sum + cat.questions.length, 0)
+      metas.push({ id: quiz.id, name: quiz.name, updatedAt: quiz.updatedAt, questionCount })
+    }
+    metas.sort((a, b) => b.updatedAt - a.updatedAt)
+    return metas
+  } catch {
+    return []
+  }
+}
+
+export async function loadQuiz(id: QuizId): Promise<Quiz | undefined> {
+  try {
+    const db = await dbPromise
+    return parseQuiz(await db.get(QUIZ_STORE, id))
   } catch {
     return undefined
   }
 }
 
-export async function saveAppData(data: AppData): Promise<void> {
+export async function saveQuiz(quiz: Quiz): Promise<void> {
   try {
     const db = await dbPromise
-    await db.put(STORE_NAME, data, DOC_KEY)
+    await db.put(QUIZ_STORE, quiz)
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === 'QuotaExceededError') {
       showPersistenceError('Storage full — changes may not be saved.')
     } else {
       showPersistenceError('Failed to save — changes may be lost on refresh.')
     }
+  }
+}
+
+export async function deleteQuiz(id: QuizId): Promise<void> {
+  try {
+    const db = await dbPromise
+    await db.delete(QUIZ_STORE, id)
+  } catch {
+    showPersistenceError('Failed to delete — changes may be lost on refresh.')
+  }
+}
+
+export async function getActiveQuizId(): Promise<QuizId | undefined> {
+  try {
+    const db = await dbPromise
+    const raw: unknown = await db.get(META_STORE, ACTIVE_QUIZ_KEY)
+    // brand applied at the storage boundary
+    return typeof raw === 'string' ? (raw as QuizId) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export async function setActiveQuizId(id: QuizId): Promise<void> {
+  try {
+    const db = await dbPromise
+    await db.put(META_STORE, id, ACTIVE_QUIZ_KEY)
+  } catch {
+    showPersistenceError('Failed to save — changes may be lost on refresh.')
   }
 }
 

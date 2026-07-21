@@ -76,6 +76,14 @@
       </div>
     </div>
 
+    <!-- Quiz Manager Modal -->
+    <div class="overlay" id="quiz-manager-overlay" style="display: none">
+      <div class="modal quiz-manager-modal" id="quiz-manager-modal">
+        <button class="modal-close" type="button" id="btn-close-quiz-manager">&#10005;</button>
+        <div id="quiz-manager-content"></div>
+      </div>
+    </div>
+
     <!-- Confirm Modal -->
     <div class="overlay" id="confirm-overlay" style="display: none">
       <div class="modal confirm-modal">
@@ -112,6 +120,15 @@
       <button class="tile" type="button" data-action="open-question">
         <span class="tile-pts"></span>
       </button>
+    </template>
+
+    <template id="tmpl-quiz-row">
+      <div class="quiz-row">
+        <button class="quiz-row__name" type="button" data-action="select-quiz"></button>
+        <span class="quiz-row__meta"></span>
+        <button class="quiz-row__edit" type="button" data-action="rename-quiz" title="Rename">&#9998;</button>
+        <button class="ec-remove-btn" type="button" data-action="delete-quiz" title="Delete">&#10005;</button>
+      </div>
     </template>
 
     <script type="module" src="/src/main.ts"></script>

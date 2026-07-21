@@ -1,6 +1,6 @@
 import './style.css'
-import { APP_MODE, PLAY_STYLE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, DEFAULT_QUESTION_TEXT, loadAppData, saveAppData, defaultQuestion, answerDisplayText } from './persistence/db.ts'
-import type { AppData, CategoryColor, Question, QuestionType, QuestionMedia, MultiPartMediaPart, OrderingItem, Team } from './persistence/db.ts'
+import { APP_MODE, PLAY_STYLE, CATEGORY_COLOR, QUESTION_TYPE, MEDIA_TYPE, DEFAULT_QUESTION_TEXT, DEFAULT_QUIZ_NAME, createQuiz, listQuizzes, loadQuiz, saveQuiz, deleteQuiz, getActiveQuizId, setActiveQuizId, defaultQuestion, answerDisplayText } from './persistence/db.ts'
+import type { Quiz, QuizId, CategoryColor, Question, QuestionType, QuestionMedia, MultiPartMediaPart, OrderingItem, Team } from './persistence/db.ts'
 import { scoreCorrect, scoreWrong, nextCorrectPreview, streakBonusFor, scorePartial } from './lib/scoring.ts'
 
 type ActiveQ = {
@@ -22,14 +22,7 @@ const MAX_CATEGORIES = 12
 
 // ── State ──
 
-const data: AppData = {
-  mode: APP_MODE.edit,
-  playStyle: PLAY_STYLE.classic,
-  categories: [],
-  teams: [],
-  used: {},
-  currentTurnIndex: 0,
-}
+let data: Quiz = createQuiz(DEFAULT_QUIZ_NAME)
 
 type MpmPartResult = 'correct' | 'wrong' | null
 
@@ -50,21 +43,27 @@ const mediaStaging: Record<string, QuestionMedia | null> = {}
 // ── Persistence ──
 
 async function loadData(): Promise<void> {
-  const saved = await loadAppData()
-  if (saved) {
-    data.mode = saved.mode
-    data.playStyle = saved.playStyle
-    data.categories = saved.categories
-    data.teams = saved.teams
-    data.used = saved.used
-    data.currentTurnIndex = saved.currentTurnIndex
-  } else {
-    await saveAppData(data)
+  const activeId = await getActiveQuizId()
+  const active = activeId ? await loadQuiz(activeId) : undefined
+  if (active) {
+    data = active
+    return
   }
+  // pointer missing or aimed at a corrupt record — fall back to the most
+  // recently updated quiz, else seed the first-run default
+  const first = (await listQuizzes())[0]
+  const fallback = first ? await loadQuiz(first.id) : undefined
+  if (fallback) {
+    data = fallback
+  } else {
+    await saveQuiz(data)
+  }
+  await setActiveQuizId(data.id)
 }
 
 function saveData(): void {
-  saveAppData(data).catch(() => {})
+  data.updatedAt = Date.now()
+  saveQuiz(data).catch(() => {})
 }
 
 // ── Helpers ──
@@ -260,6 +259,11 @@ function renderSubtitle(): void {
   const el = $('subtitle')
   el.textContent = ''
   if (data.mode === APP_MODE.edit) {
+    const quizName = document.createElement('span')
+    quizName.className = 'subtitle-quiz-name'
+    quizName.textContent = data.name
+    el.appendChild(quizName)
+
     const badge = document.createElement('span')
     badge.className = 'edit-mode-badge'
     badge.textContent = 'Edit Mode'
@@ -277,6 +281,13 @@ function renderControls(): void {
   const frag = document.createDocumentFragment()
 
   if (data.mode === APP_MODE.edit) {
+    const quizzesBtn = document.createElement('button')
+    quizzesBtn.type = 'button'
+    quizzesBtn.className = 'ctrl-btn'
+    quizzesBtn.textContent = '☰ Quizzes'
+    quizzesBtn.dataset.action = 'open-quiz-manager'
+    frag.appendChild(quizzesBtn)
+
     if (data.categories.length < MAX_CATEGORIES) {
       const addBtn = document.createElement('button')
       addBtn.type = 'button'
@@ -2780,6 +2791,144 @@ async function cancelGame(): Promise<void> {
   switchMode(APP_MODE.edit)
 }
 
+// ── Quiz Manager ──
+
+async function openQuizManager(): Promise<void> {
+  const content = $('quiz-manager-content')
+  content.textContent = ''
+
+  const title = document.createElement('div')
+  title.className = 'modal-title'
+  title.textContent = 'Quizzes'
+  content.appendChild(title)
+
+  const metas = await listQuizzes()
+  const frag = document.createDocumentFragment()
+
+  for (const m of metas) {
+    const row = cloneTemplate('tmpl-quiz-row')
+    row.dataset.id = m.id
+    if (m.id === data.id) row.classList.add('active')
+
+    const nameBtn = row.querySelector('.quiz-row__name') as HTMLButtonElement
+    nameBtn.textContent = m.name
+
+    const meta = row.querySelector('.quiz-row__meta') as HTMLElement
+    const date = new Date(m.updatedAt).toLocaleDateString()
+    meta.textContent = `${m.questionCount} question${m.questionCount === 1 ? '' : 's'} · ${date}`
+
+    frag.appendChild(row)
+  }
+
+  const list = document.createElement('div')
+  list.className = 'quiz-list'
+  list.appendChild(frag)
+  content.appendChild(list)
+
+  const addBtn = document.createElement('button')
+  addBtn.type = 'button'
+  addBtn.className = 'edit-add-btn'
+  addBtn.textContent = '+ New Quiz'
+  addBtn.dataset.action = 'new-quiz'
+  content.appendChild(addBtn)
+
+  $('quiz-manager-overlay').style.display = 'flex'
+
+  const activeName = content.querySelector<HTMLElement>('.quiz-row.active .quiz-row__name')
+  activeName?.focus()
+}
+
+async function switchQuiz(id: QuizId): Promise<void> {
+  if (id === data.id) {
+    $('quiz-manager-overlay').style.display = 'none'
+    return
+  }
+  const quiz = await loadQuiz(id)
+  if (!quiz) return
+  data = quiz
+  await setActiveQuizId(id)
+  $('quiz-manager-overlay').style.display = 'none'
+  renderAll()
+}
+
+async function handleNewQuiz(): Promise<void> {
+  const count = (await listQuizzes()).length
+  data = createQuiz(`Quiz ${count + 1}`)
+  await saveQuiz(data)
+  await setActiveQuizId(data.id)
+  $('quiz-manager-overlay').style.display = 'none'
+  renderAll()
+}
+
+async function handleDeleteQuiz(id: QuizId): Promise<void> {
+  const target = (await listQuizzes()).find((m) => m.id === id)
+  if (!target) return
+  if (!await showConfirm(`Delete quiz "${target.name}"? This cannot be undone.`)) return
+
+  await deleteQuiz(id)
+
+  if (id === data.id) {
+    const remaining = (await listQuizzes())[0]
+    const next = remaining ? await loadQuiz(remaining.id) : undefined
+    if (next) {
+      data = next
+    } else {
+      data = createQuiz(DEFAULT_QUIZ_NAME)
+      await saveQuiz(data)
+    }
+    await setActiveQuizId(data.id)
+    renderAll()
+  }
+
+  await openQuizManager()
+}
+
+function startInlineRename(row: HTMLElement, id: QuizId, currentName: string): void {
+  const nameBtn = row.querySelector('.quiz-row__name')
+  if (!nameBtn) return
+
+  const input = document.createElement('input')
+  input.className = 'edit-input quiz-row__rename'
+  input.value = currentName
+  nameBtn.replaceWith(input)
+  input.focus()
+  input.select()
+
+  const ac = new AbortController()
+
+  async function commit(): Promise<void> {
+    ac.abort()
+    const newName = input.value.trim() || currentName
+    if (id === data.id) {
+      data.name = newName
+      saveData()
+      renderSubtitle()
+    } else {
+      const quiz = await loadQuiz(id)
+      if (quiz) {
+        quiz.name = newName
+        quiz.updatedAt = Date.now()
+        await saveQuiz(quiz)
+      }
+    }
+    await openQuizManager()
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commit()
+    } else if (e.key === 'Escape') {
+      // stop the document-level Escape handler from closing the whole overlay
+      e.stopPropagation()
+      ac.abort()
+      openQuizManager()
+    }
+  }, { signal: ac.signal })
+
+  input.addEventListener('blur', () => { commit() }, { signal: ac.signal })
+}
+
 // ── Winner ──
 
 function showWinner(): void {
@@ -2848,7 +2997,7 @@ function setupEvents(): void {
     (e) => {
       if (e.key === 'Escape') {
         destroyYoutubePlayer()
-        for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay', 'team-setup-overlay']) {
+        for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay', 'team-setup-overlay', 'quiz-manager-overlay']) {
           $(id).style.display = 'none'
         }
       }
@@ -2863,7 +3012,7 @@ function setupEvents(): void {
     }
   }
 
-  for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay', 'team-setup-overlay']) {
+  for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay', 'team-setup-overlay', 'quiz-manager-overlay']) {
     $(id).addEventListener('click', handleOverlayClick, { signal })
   }
 
@@ -2874,6 +3023,9 @@ function setupEvents(): void {
       const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')
       if (!btn) return
       switch (btn.dataset.action) {
+        case 'open-quiz-manager':
+          openQuizManager()
+          break
         case 'add-category':
           addCategory()
           break
@@ -3602,6 +3754,50 @@ function setupEvents(): void {
         }
         case 'ts-start-game':
           startGame()
+          break
+        default:
+          break
+      }
+    },
+    { signal },
+  )
+
+  // Quiz manager modal delegation
+  $('btn-close-quiz-manager').addEventListener(
+    'click',
+    () => {
+      $('quiz-manager-overlay').style.display = 'none'
+    },
+    { signal },
+  )
+
+  $('quiz-manager-modal').addEventListener(
+    'click',
+    (e) => {
+      const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')
+      if (!target) return
+
+      if (target.dataset.action === 'new-quiz') {
+        handleNewQuiz()
+        return
+      }
+
+      const row = target.closest<HTMLElement>('.quiz-row')
+      // brand re-applied at the DOM boundary
+      const id = row?.dataset.id as QuizId | undefined
+      if (!row || !id) return
+
+      switch (target.dataset.action) {
+        case 'select-quiz':
+          switchQuiz(id)
+          break
+        case 'rename-quiz': {
+          const nameBtn = row.querySelector('.quiz-row__name')
+          startInlineRename(row, id, nameBtn?.textContent ?? '')
+          break
+        }
+        case 'delete-quiz':
+          handleDeleteQuiz(id)
           break
         default:
           break

@@ -1155,6 +1155,47 @@ h1 {
 .confirm-modal { max-width: 380px; text-align: center; }
 .confirm-message { font-size: 1rem; margin-bottom: 20px; color: var(--text-main); }
 
+/* ── QUIZ MANAGER ── */
+.quiz-manager-modal { max-width: 480px; }
+
+.quiz-list { display: flex; flex-direction: column; margin-bottom: 12px; }
+
+.quiz-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #2a4080;
+}
+
+.quiz-row__name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-main);
+  font-size: 15px;
+  cursor: pointer;
+}
+.quiz-row__name:hover { color: var(--gold); }
+.quiz-row.active .quiz-row__name { color: var(--gold); }
+
+.quiz-row__meta { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+.quiz-row__rename { flex: 1; min-width: 0; }
+
+.quiz-row__edit {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.quiz-row__edit:hover { color: var(--gold); }
+
+.subtitle-quiz-name { color: var(--gold); margin-right: 4px; }
+
 .ts-field-label {
   display: block;
   font-size: 13px;
