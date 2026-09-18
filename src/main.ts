@@ -29,6 +29,15 @@ type CountdownState = {
   late: boolean
 }
 
+const TIMER_CUE = { boundary: 'boundary', tick: 'tick', expired: 'expired' } as const
+type TimerCue = (typeof TIMER_CUE)[keyof typeof TIMER_CUE]
+
+const TIMER_SOUND_URLS = {
+  [TIMER_CUE.boundary]: '/sounds/ominous-30-second.mp3',
+  [TIMER_CUE.tick]: '/sounds/ominous-tick.mp3',
+  [TIMER_CUE.expired]: '/sounds/ominous-time-up.mp3',
+} as const satisfies Record<TimerCue, string>
+
 // ── Constants ──
 
 const COLOR_ORDER = [
@@ -61,7 +70,10 @@ const mediaStaging: Record<string, QuestionMedia | null> = {}
 let countdown: CountdownState | null = null
 let timerMuted = false
 let timerAudioContext: AudioContext | null = null
-const activeTimerOscillators = new Set<OscillatorNode>()
+let timerSoundLoadPromise: Promise<void> | null = null
+let timerAudioGeneration = 0
+const timerSoundBuffers: Partial<Record<TimerCue, AudioBuffer>> = {}
+const activeTimerSources = new Set<AudioBufferSourceNode>()
 
 // ── Persistence ──
 
@@ -265,11 +277,12 @@ function formatCountdown(seconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
 }
 
-function stopTimerTones(): void {
-  for (const oscillator of activeTimerOscillators) {
-    try { oscillator.stop() } catch { /* oscillator has already ended */ }
+function stopTimerSounds(): void {
+  timerAudioGeneration++
+  for (const source of activeTimerSources) {
+    try { source.stop() } catch { /* source has already ended */ }
   }
-  activeTimerOscillators.clear()
+  activeTimerSources.clear()
 }
 
 function ensureTimerAudio(): void {
@@ -281,33 +294,43 @@ function ensureTimerAudio(): void {
     }
   } catch {
     timerAudioContext = null
+    return
   }
+
+  if (timerSoundLoadPromise) return
+  const context = timerAudioContext
+  const entries = Object.entries(TIMER_SOUND_URLS) as Array<[TimerCue, string]>
+  timerSoundLoadPromise = Promise.all(entries.map(async ([cue, url]) => {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`Failed to load timer sound: ${url}`)
+    const buffer = await context.decodeAudioData(await response.arrayBuffer())
+    return [cue, buffer] as const
+  })).then((sounds) => {
+    for (const [cue, buffer] of sounds) timerSoundBuffers[cue] = buffer
+  }).catch(() => {})
 }
 
-function playTimerCue(kind: 'boundary' | 'tick' | 'expired'): void {
+function playTimerCue(kind: TimerCue): void {
   if (timerMuted) return
   ensureTimerAudio()
   const context = timerAudioContext
   if (!context) return
+  const generation = timerAudioGeneration
 
-  const oscillator = context.createOscillator()
-  const gain = context.createGain()
-  const now = context.currentTime
-  const duration = kind === 'expired' ? 0.7 : kind === 'boundary' ? 0.35 : 0.07
+  function play(audioContext: AudioContext): void {
+    if (timerMuted || generation !== timerAudioGeneration) return
+    const buffer = timerSoundBuffers[kind]
+    if (!buffer) return
+    const source = audioContext.createBufferSource()
+    source.buffer = buffer
+    source.connect(audioContext.destination)
+    activeTimerSources.add(source)
+    source.onended = () => activeTimerSources.delete(source)
+    source.start()
+  }
 
-  oscillator.type = kind === 'tick' ? 'square' : kind === 'expired' ? 'sawtooth' : 'sine'
-  oscillator.frequency.setValueAtTime(kind === 'tick' ? 760 : kind === 'expired' ? 150 : 92, now)
-  if (kind === 'expired') oscillator.frequency.exponentialRampToValueAtTime(62, now + duration)
-  gain.gain.setValueAtTime(0.0001, now)
-  gain.gain.exponentialRampToValueAtTime(kind === 'tick' ? 0.13 : 0.25, now + 0.01)
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-
-  oscillator.connect(gain)
-  gain.connect(context.destination)
-  activeTimerOscillators.add(oscillator)
-  oscillator.onended = () => activeTimerOscillators.delete(oscillator)
-  oscillator.start(now)
-  oscillator.stop(now + duration)
+  if (timerSoundBuffers[kind]) play(context)
+  else timerSoundLoadPromise?.then(() => play(context))
 }
 
 function renderCountdown(): void {
@@ -371,7 +394,7 @@ function expireCountdown(): void {
   state.status = TIMER_STATUS.expired
   state.previousWholeSeconds = 0
   renderCountdown()
-  playTimerCue('expired')
+  playTimerCue(TIMER_CUE.expired)
 }
 
 function updateCountdown(now: number): void {
@@ -384,9 +407,9 @@ function updateCountdown(now: number): void {
     state.previousWholeSeconds = wholeSeconds
     renderCountdown()
     if (wholeSeconds > 0 && wholeSeconds <= 10) {
-      playTimerCue('tick')
+      playTimerCue(TIMER_CUE.tick)
     } else if (wholeSeconds > 0 && wholeSeconds < state.durationSeconds && wholeSeconds % 30 === 0) {
-      playTimerCue('boundary')
+      playTimerCue(TIMER_CUE.boundary)
     }
   }
 
@@ -411,7 +434,7 @@ function startCountdown(durationSeconds: number): void {
   }
   ensureTimerAudio()
   renderCountdown()
-  if (durationSeconds <= 10) playTimerCue('tick')
+  if (durationSeconds <= 10) playTimerCue(TIMER_CUE.tick)
   countdown.frameId = requestAnimationFrame(updateCountdown)
 }
 
@@ -420,7 +443,7 @@ function endCountdown(): void {
     cancelAnimationFrame(countdown.frameId)
   }
   countdown = null
-  stopTimerTones()
+  stopTimerSounds()
   const panel = document.getElementById('m-timer')
   if (panel) panel.style.display = 'none'
 }
@@ -437,7 +460,7 @@ function toggleCountdownPause(): void {
     if (state.frameId !== null) cancelAnimationFrame(state.frameId)
     state.frameId = null
     state.status = TIMER_STATUS.paused
-    stopTimerTones()
+    stopTimerSounds()
     renderCountdown()
   } else if (state.status === TIMER_STATUS.paused) {
     state.status = TIMER_STATUS.running
@@ -450,7 +473,7 @@ function toggleCountdownPause(): void {
 
 function toggleTimerMute(): void {
   timerMuted = !timerMuted
-  if (timerMuted) stopTimerTones()
+  if (timerMuted) stopTimerSounds()
   else ensureTimerAudio()
   renderCountdown()
 }
@@ -469,7 +492,7 @@ function lockCountdown(): boolean {
   current.frameId = null
   current.late = current.status === TIMER_STATUS.expired
   current.status = TIMER_STATUS.locked
-  stopTimerTones()
+  stopTimerSounds()
   renderCountdown()
   return true
 }
