@@ -23,6 +23,18 @@
           <div class="modal-pts" id="m-pts"></div>
           <div class="modal-cat" id="m-cat"></div>
         </div>
+        <div class="question-timer" id="m-timer" style="display: none">
+          <div class="question-timer__dial">
+            <span class="question-timer__value" id="m-timer-value" role="timer">00:00</span>
+          </div>
+          <div class="question-timer__details">
+            <div class="question-timer__status" id="m-timer-status" aria-live="polite">Press Space when an answer starts</div>
+            <div class="question-timer__controls">
+              <button class="question-timer__control" type="button" id="btn-timer-pause" data-action="timer-pause">Pause</button>
+              <button class="question-timer__control" type="button" id="btn-timer-mute" data-action="timer-mute">Mute</button>
+            </div>
+          </div>
+        </div>
         <div class="q-image-wrap" id="m-image-wrap" style="display: none">
           <img id="m-image" src="" alt="Question image" />
         </div>
@@ -34,6 +46,7 @@
         <div class="a-display" id="m-answer"></div>
         <div class="team-selector" id="m-teams"></div>
         <div class="modal-btn-row">
+          <button class="modal-btn btn-lock" type="button" id="btn-lock" style="display: none"><span id="m-lock-label">Lock Answer</span><span class="btn-lock__shortcut">Space</span></button>
           <button class="modal-btn btn-reveal" type="button" id="btn-reveal">Reveal Answer</button>
           <button class="modal-btn btn-correct" type="button" id="btn-correct" style="display: none">&#10003; Correct</button>
           <button class="modal-btn btn-wrong" type="button" id="btn-wrong" style="display: none">&#10007; Wrong</button>

@@ -11,6 +11,33 @@ type ActiveQ = {
   stealTargetIdx: number | null
 }
 
+const TIMER_STATUS = {
+  running: 'running',
+  paused: 'paused',
+  locked: 'locked',
+  expired: 'expired',
+} as const
+type TimerStatus = (typeof TIMER_STATUS)[keyof typeof TIMER_STATUS]
+
+type CountdownState = {
+  durationSeconds: number
+  remainingMs: number
+  deadlineMs: number
+  previousWholeSeconds: number
+  frameId: number | null
+  status: TimerStatus
+  late: boolean
+}
+
+const TIMER_CUE = { boundary: 'boundary', tick: 'tick', expired: 'expired' } as const
+type TimerCue = (typeof TIMER_CUE)[keyof typeof TIMER_CUE]
+
+const TIMER_SOUND_URLS = {
+  [TIMER_CUE.boundary]: '/sounds/ominous-30-second.mp3',
+  [TIMER_CUE.tick]: '/sounds/ominous-tick.mp3',
+  [TIMER_CUE.expired]: '/sounds/ominous-time-up.mp3',
+} as const satisfies Record<TimerCue, string>
+
 // ── Constants ──
 
 const COLOR_ORDER = [
@@ -40,6 +67,13 @@ let activeQ: ActiveQ | null = null
 let mpmCarousel: MpmCarouselState | null = null
 let activeEditCell: { ci: number; qi: number } | null = null
 const mediaStaging: Record<string, QuestionMedia | null> = {}
+let countdown: CountdownState | null = null
+let timerMuted = false
+let timerAudioContext: AudioContext | null = null
+let timerSoundLoadPromise: Promise<void> | null = null
+let timerAudioGeneration = 0
+const timerSoundBuffers: Partial<Record<TimerCue, AudioBuffer>> = {}
+const activeTimerSources = new Set<AudioBufferSourceNode>()
 
 // ── Persistence ──
 
@@ -233,6 +267,245 @@ function createYoutubePlayer(containerId: string, videoId: string, startSeconds?
 function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
   let timer: ReturnType<typeof setTimeout>
   return ((...args: Parameters<T>) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms) }) as T
+}
+
+// ── Question timer ──
+
+function formatCountdown(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+}
+
+function stopTimerSounds(): void {
+  timerAudioGeneration++
+  for (const source of activeTimerSources) {
+    try { source.stop() } catch { /* source has already ended */ }
+  }
+  activeTimerSources.clear()
+}
+
+function ensureTimerAudio(): void {
+  if (timerMuted) return
+  try {
+    timerAudioContext ??= new AudioContext()
+    if (timerAudioContext.state === 'suspended') {
+      timerAudioContext.resume().catch(() => {})
+    }
+  } catch {
+    timerAudioContext = null
+    return
+  }
+
+  if (timerSoundLoadPromise) return
+  const context = timerAudioContext
+  const entries = Object.entries(TIMER_SOUND_URLS) as Array<[TimerCue, string]>
+  timerSoundLoadPromise = Promise.all(entries.map(async ([cue, url]) => {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`Failed to load timer sound: ${url}`)
+    const buffer = await context.decodeAudioData(await response.arrayBuffer())
+    return [cue, buffer] as const
+  })).then((sounds) => {
+    for (const [cue, buffer] of sounds) timerSoundBuffers[cue] = buffer
+  }).catch(() => {})
+}
+
+function playTimerCue(kind: TimerCue): void {
+  if (timerMuted) return
+  ensureTimerAudio()
+  const context = timerAudioContext
+  if (!context) return
+  const generation = timerAudioGeneration
+
+  function play(audioContext: AudioContext): void {
+    if (timerMuted || generation !== timerAudioGeneration) return
+    const buffer = timerSoundBuffers[kind]
+    if (!buffer) return
+    const source = audioContext.createBufferSource()
+    source.buffer = buffer
+    source.connect(audioContext.destination)
+    activeTimerSources.add(source)
+    source.onended = () => activeTimerSources.delete(source)
+    source.start()
+  }
+
+  if (timerSoundBuffers[kind]) play(context)
+  else timerSoundLoadPromise?.then(() => play(context))
+}
+
+function renderCountdown(): void {
+  const panel = $('m-timer')
+  const value = $('m-timer-value')
+  const status = $('m-timer-status')
+  const pause = $('btn-timer-pause') as HTMLButtonElement
+  const mute = $('btn-timer-mute') as HTMLButtonElement
+  const state = countdown
+
+  if (!state) {
+    panel.style.display = 'none'
+    return
+  }
+
+  const wholeSeconds = Math.ceil(state.remainingMs / 1000)
+  const formatted = formatCountdown(wholeSeconds)
+  const progress = state.remainingMs / (state.durationSeconds * 1000)
+  value.textContent = formatted
+  value.setAttribute('aria-label', state.status === TIMER_STATUS.expired ? 'Time is up' : `${formatted} remaining`)
+  panel.style.display = 'flex'
+  panel.style.setProperty('--timer-progress', String(Math.max(0, Math.min(1, progress)) * 360) + 'deg')
+  panel.classList.toggle('question-timer--urgent', wholeSeconds <= 10 && wholeSeconds > 0 && state.status === TIMER_STATUS.running)
+  panel.classList.toggle('question-timer--paused', state.status === TIMER_STATUS.paused)
+  panel.classList.toggle('question-timer--locked', state.status === TIMER_STATUS.locked && !state.late)
+  panel.classList.toggle('question-timer--expired', state.status === TIMER_STATUS.expired || state.late)
+
+  let statusText: string
+  switch (state.status) {
+    case TIMER_STATUS.running:
+      statusText = 'Press Space when an answer starts'
+      break
+    case TIMER_STATUS.paused:
+      statusText = 'Timer paused'
+      break
+    case TIMER_STATUS.locked:
+      statusText = state.late ? 'Late answer — game master decides' : `Answer locked at ${formatted}`
+      break
+    case TIMER_STATUS.expired:
+      statusText = "Time's up — late answers are still allowed"
+      break
+    default: {
+      const _exhaustive: never = state.status
+      throw new Error(`unreachable: unknown timer status ${_exhaustive}`)
+    }
+  }
+  if (status.textContent !== statusText) status.textContent = statusText
+
+  pause.textContent = state.status === TIMER_STATUS.paused ? 'Resume' : 'Pause'
+  pause.disabled = state.status === TIMER_STATUS.locked || state.status === TIMER_STATUS.expired
+  mute.textContent = timerMuted ? 'Unmute' : 'Mute'
+  mute.setAttribute('aria-pressed', String(timerMuted))
+}
+
+function expireCountdown(): void {
+  const state = countdown
+  if (!state || state.status === TIMER_STATUS.expired) return
+  if (state.frameId !== null) cancelAnimationFrame(state.frameId)
+  state.frameId = null
+  state.remainingMs = 0
+  state.status = TIMER_STATUS.expired
+  state.previousWholeSeconds = 0
+  renderCountdown()
+  playTimerCue(TIMER_CUE.expired)
+}
+
+function updateCountdown(now: number): void {
+  const state = countdown
+  if (!state || state.status !== TIMER_STATUS.running) return
+
+  state.remainingMs = Math.max(0, state.deadlineMs - now)
+  const wholeSeconds = Math.ceil(state.remainingMs / 1000)
+  if (wholeSeconds !== state.previousWholeSeconds) {
+    state.previousWholeSeconds = wholeSeconds
+    renderCountdown()
+    if (wholeSeconds > 0 && wholeSeconds <= 10) {
+      playTimerCue(TIMER_CUE.tick)
+    } else if (wholeSeconds > 0 && wholeSeconds < state.durationSeconds && wholeSeconds % 30 === 0) {
+      playTimerCue(TIMER_CUE.boundary)
+    }
+  }
+
+  if (state.remainingMs <= 0) {
+    expireCountdown()
+    return
+  }
+  state.frameId = requestAnimationFrame(updateCountdown)
+}
+
+function startCountdown(durationSeconds: number): void {
+  endCountdown()
+  const durationMs = durationSeconds * 1000
+  countdown = {
+    durationSeconds,
+    remainingMs: durationMs,
+    deadlineMs: performance.now() + durationMs,
+    previousWholeSeconds: durationSeconds,
+    frameId: null,
+    status: TIMER_STATUS.running,
+    late: false,
+  }
+  ensureTimerAudio()
+  renderCountdown()
+  if (durationSeconds <= 10) playTimerCue(TIMER_CUE.tick)
+  countdown.frameId = requestAnimationFrame(updateCountdown)
+}
+
+function endCountdown(): void {
+  if (countdown?.frameId !== null && countdown?.frameId !== undefined) {
+    cancelAnimationFrame(countdown.frameId)
+  }
+  countdown = null
+  stopTimerSounds()
+  const panel = document.getElementById('m-timer')
+  if (panel) panel.style.display = 'none'
+}
+
+function toggleCountdownPause(): void {
+  const state = countdown
+  if (!state) return
+  if (state.status === TIMER_STATUS.running) {
+    state.remainingMs = Math.max(0, state.deadlineMs - performance.now())
+    if (state.remainingMs <= 0) {
+      expireCountdown()
+      return
+    }
+    if (state.frameId !== null) cancelAnimationFrame(state.frameId)
+    state.frameId = null
+    state.status = TIMER_STATUS.paused
+    stopTimerSounds()
+    renderCountdown()
+  } else if (state.status === TIMER_STATUS.paused) {
+    state.status = TIMER_STATUS.running
+    state.deadlineMs = performance.now() + state.remainingMs
+    ensureTimerAudio()
+    renderCountdown()
+    state.frameId = requestAnimationFrame(updateCountdown)
+  }
+}
+
+function toggleTimerMute(): void {
+  timerMuted = !timerMuted
+  if (timerMuted) stopTimerSounds()
+  else ensureTimerAudio()
+  renderCountdown()
+}
+
+function lockCountdown(): boolean {
+  const state = countdown
+  if (!state || state.status === TIMER_STATUS.locked) return false
+
+  if (state.status === TIMER_STATUS.running) {
+    state.remainingMs = Math.max(0, state.deadlineMs - performance.now())
+    if (state.remainingMs <= 0) expireCountdown()
+  }
+  const current = countdown
+  if (!current || current.status === TIMER_STATUS.locked) return false
+  if (current.frameId !== null) cancelAnimationFrame(current.frameId)
+  current.frameId = null
+  current.late = current.status === TIMER_STATUS.expired
+  current.status = TIMER_STATUS.locked
+  stopTimerSounds()
+  renderCountdown()
+  return true
+}
+
+function resumeLockedCountdown(): boolean {
+  const state = countdown
+  if (!state || state.status !== TIMER_STATUS.locked || state.late || state.remainingMs <= 0) return false
+  state.status = TIMER_STATUS.running
+  state.deadlineMs = performance.now() + state.remainingMs
+  ensureTimerAudio()
+  renderCountdown()
+  state.frameId = requestAnimationFrame(updateCountdown)
+  return true
 }
 
 // ── Mode ──
@@ -544,6 +817,106 @@ function renderCurrentTeamLabel(): void {
   el.appendChild(label)
 }
 
+function showLockButton(mode: 'lock' | 'resume'): void {
+  const button = $('btn-lock') as HTMLButtonElement
+  button.style.display = 'inline-flex'
+  $('m-lock-label').textContent = mode === 'lock' ? 'Lock Answer' : 'Resume Timer'
+  const shortcut = button.querySelector<HTMLElement>('.btn-lock__shortcut')
+  if (shortcut) shortcut.style.display = mode === 'lock' ? '' : 'none'
+}
+
+function hideLockButton(): void {
+  $('btn-lock').style.display = 'none'
+}
+
+function activeQuestion(): Question | undefined {
+  if (!activeQ) return undefined
+  return data.categories[activeQ.catIdx]?.questions[activeQ.qIdx]
+}
+
+function currentMultiPartTimeLimit(q: Question): number | undefined {
+  if (q.type !== QUESTION_TYPE.multiPartMedia) {
+    throw new Error('unreachable: multi-part timer requires a multi-part question')
+  }
+  const partIndex = mpmCarousel?.currentIdx ?? 0
+  return q.parts[partIndex]?.timeLimitSeconds ?? q.timeLimitSeconds
+}
+
+function prepareMultiPartControls(q: Question, startTimer: boolean): void {
+  if (q.type !== QUESTION_TYPE.multiPartMedia) {
+    throw new Error('unreachable: multi-part controls require a multi-part question')
+  }
+
+  const timeLimitSeconds = currentMultiPartTimeLimit(q)
+  $('btn-reveal').style.display = 'none'
+  if (q.ffa) {
+    hideLockButton()
+    $('btn-correct').style.display = 'none'
+    $('btn-wrong').style.display = 'none'
+    $('btn-skip').style.display = 'none'
+    renderFfaTeamPicker()
+  } else if (timeLimitSeconds !== undefined) {
+    showLockButton('lock')
+    $('btn-correct').style.display = 'none'
+    $('btn-wrong').style.display = 'none'
+    $('btn-skip').style.display = 'inline-flex'
+  } else {
+    hideLockButton()
+    $('btn-correct').style.display = 'inline-flex'
+    $('btn-wrong').style.display = 'inline-flex'
+    $('btn-skip').style.display = 'inline-flex'
+  }
+
+  if (startTimer && timeLimitSeconds !== undefined) {
+    startCountdown(timeLimitSeconds)
+    const lockButton = $('btn-lock') as HTMLButtonElement
+    if (lockButton.style.display !== 'none') lockButton.focus()
+  }
+}
+
+function lockAnswer(): void {
+  if (!lockCountdown()) return
+  const q = activeQuestion()
+  if (!q) return
+
+  if (countdown?.late) hideLockButton()
+  else showLockButton('resume')
+  if (q.type === QUESTION_TYPE.multiPartMedia) {
+    if (q.ffa) return
+    $('btn-correct').style.display = 'inline-flex'
+    $('btn-wrong').style.display = 'inline-flex'
+    $('btn-skip').style.display = 'inline-flex'
+  } else {
+    $('btn-reveal').style.display = 'inline-flex'
+  }
+}
+
+function resumeAnswer(): void {
+  if (!resumeLockedCountdown()) return
+  const q = activeQuestion()
+  if (!q) return
+
+  showLockButton('lock')
+  $('btn-reveal').style.display = 'none'
+  $('btn-correct').style.display = 'none'
+  $('btn-wrong').style.display = 'none'
+
+  if (q.type === QUESTION_TYPE.multiPartMedia) {
+    if (q.ffa && mpmCarousel) {
+      mpmCarousel.ffaTeamPerPart[mpmCarousel.currentIdx] = null
+      $('btn-skip').style.display = 'none'
+      renderFfaTeamPicker()
+    } else {
+      $('btn-skip').style.display = 'inline-flex'
+    }
+  }
+}
+
+function toggleAnswerLock(): void {
+  if (countdown?.status === TIMER_STATUS.locked) resumeAnswer()
+  else lockAnswer()
+}
+
 // ── Question Modal ──
 
 function shuffle<T>(arr: readonly T[]): T[] {
@@ -809,6 +1182,7 @@ function renderMpmSlide(state: MpmCarouselState): void {
 
 function mpmCarouselJudge(result: MpmPartResult): void {
   if (!mpmCarousel) return
+  endCountdown()
   if (result !== null) mpmCarousel.results[mpmCarousel.currentIdx] = result
   mpmCarouselAdvance()
 }
@@ -826,12 +1200,7 @@ function mpmCarouselAdvance(): void {
       if (activeQ) {
         const cat = data.categories[activeQ.catIdx]
         const q = cat?.questions[activeQ.qIdx]
-        if (q?.ffa) {
-          $('btn-correct').style.display = 'none'
-          $('btn-wrong').style.display = 'none'
-          $('btn-skip').style.display = 'none'
-          renderFfaTeamPicker()
-        }
+        if (q?.type === QUESTION_TYPE.multiPartMedia) prepareMultiPartControls(q, true)
       }
       return
     }
@@ -842,6 +1211,9 @@ function mpmCarouselAdvance(): void {
 
 function renderMpmSummary(): void {
   if (!mpmCarousel || !activeQ) return
+
+  endCountdown()
+  hideLockButton()
 
   const { parts, results, pts } = mpmCarousel
   const correctCount = results.filter((r) => r === 'correct').length
@@ -946,6 +1318,8 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   if (!q) return
 
   activeQ = { catIdx, qIdx, pts, stealTargetIdx: null }
+  endCountdown()
+  hideLockButton()
 
   const modal = $('q-modal')
   modal.className = 'modal'
@@ -1004,12 +1378,13 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
       results: q.parts.map(() => null), teamIdx: null,
       ffaTeamPerPart: q.parts.map(() => null),
     }
-    $('btn-reveal').style.display = 'none'
-    $('btn-correct').style.display = 'inline-flex'
-    $('btn-wrong').style.display = 'inline-flex'
     renderMpmSlide(mpmCarousel)
+    prepareMultiPartControls(q, false)
   } else {
-    $('btn-reveal').style.display = 'inline-flex'
+    const timed = q.timeLimitSeconds !== undefined && !q.ffa && !cat.steal
+    $('btn-reveal').style.display = timed ? 'none' : 'inline-flex'
+    if (timed) showLockButton('lock')
+    else hideLockButton()
     $('btn-correct').style.display = 'none'
     $('btn-wrong').style.display = 'none'
   }
@@ -1023,6 +1398,7 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
     $('m-question').style.display = 'none'
     $('m-type-content').style.display = 'none'
     $('btn-reveal').style.display = 'none'
+    hideLockButton()
     $('btn-correct').style.display = 'none'
     $('btn-wrong').style.display = 'none'
     $('btn-skip').style.display = 'none'
@@ -1070,6 +1446,7 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
     $('m-question').style.display = 'none'
     $('m-type-content').style.display = 'none'
     $('btn-reveal').style.display = 'none'
+    hideLockButton()
     $('btn-skip').style.display = 'none'
 
     const announcement = document.createElement('div')
@@ -1101,16 +1478,20 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
           results: q.parts.map(() => null), teamIdx: null,
           ffaTeamPerPart: q.parts.map(() => null),
         }
-        $('btn-reveal').style.display = 'none'
-        $('btn-correct').style.display = 'none'
-        $('btn-wrong').style.display = 'none'
-        $('btn-skip').style.display = 'none'
         renderPlayTypeContent(q, $('m-type-content'))
         renderMpmSlide(mpmCarousel)
-        renderFfaTeamPicker()
+        prepareMultiPartControls(q, true)
       } else {
-        $('btn-reveal').style.display = 'inline-flex'
+        const timed = q.timeLimitSeconds !== undefined
+        $('btn-reveal').style.display = timed ? 'none' : 'inline-flex'
+        if (timed) showLockButton('lock')
+        else hideLockButton()
         $('btn-skip').style.display = ''
+        if (q.timeLimitSeconds !== undefined) {
+          startCountdown(q.timeLimitSeconds)
+          const lockButton = $('btn-lock') as HTMLButtonElement
+          lockButton.focus()
+        }
       }
 
       if (q.media?.type === MEDIA_TYPE.image) {
@@ -1139,6 +1520,14 @@ function openQuestion(catIdx: number, qIdx: number, pts: number): void {
   }
 
   $('q-overlay').style.display = 'flex'
+  if (!q.ffa && !cat.steal) {
+    const timeLimitSeconds = q.type === QUESTION_TYPE.multiPartMedia
+      ? currentMultiPartTimeLimit(q)
+      : q.timeLimitSeconds
+    if (timeLimitSeconds !== undefined) startCountdown(timeLimitSeconds)
+  }
+  const lockButton = $('btn-lock') as HTMLButtonElement
+  if (lockButton.style.display !== 'none') lockButton.focus()
 }
 
 function revealAnswer(): void {
@@ -1151,6 +1540,7 @@ function revealAnswer(): void {
 
   $('m-answer').style.display = 'block'
   $('btn-reveal').style.display = 'none'
+  hideLockButton()
 
   if (q.ffa) {
     $('btn-correct').style.display = 'none'
@@ -1313,6 +1703,7 @@ function markUsed(): void {
 }
 
 function closeQModal(): void {
+  endCountdown()
   destroyYoutubePlayer()
   $('q-overlay').style.display = 'none'
   activeQ = null
@@ -1580,7 +1971,7 @@ function renderAnswerFields(container: HTMLElement, question: Question): void {
       list.id = 'cell-mpm-parts'
       list.className = 'mpm-parts-list'
       for (const [i, part] of question.parts.entries()) {
-        list.appendChild(buildMultiPartMediaRow(i, part, question.parts.length))
+        list.appendChild(buildMultiPartMediaRow(i, part, question.parts.length, question.timeLimitSeconds))
       }
       container.appendChild(list)
 
@@ -1792,7 +2183,7 @@ function buildOrderingItemRow(index: number, item: OrderingItem, total: number):
   return row
 }
 
-function buildMultiPartMediaRow(index: number, part: MultiPartMediaPart, total: number): HTMLElement {
+function buildMultiPartMediaRow(index: number, part: MultiPartMediaPart, total: number, defaultTimeLimitSeconds: number | undefined): HTMLElement {
   const row = document.createElement('div')
   row.className = 'mpm-part-row'
   row.dataset.partIdx = String(index)
@@ -1812,6 +2203,50 @@ function buildMultiPartMediaRow(index: number, part: MultiPartMediaPart, total: 
   if (total <= 1) removeBtn.style.display = 'none'
   header.appendChild(removeBtn)
   row.appendChild(header)
+
+  const timerOverride = document.createElement('label')
+  timerOverride.className = 'mpm-timer-override'
+  const timerOverrideCheckbox = document.createElement('input')
+  timerOverrideCheckbox.type = 'checkbox'
+  timerOverrideCheckbox.className = 'mpm-timer-override__checkbox'
+  timerOverrideCheckbox.checked = part.timeLimitSeconds !== undefined
+  timerOverride.appendChild(timerOverrideCheckbox)
+  timerOverride.appendChild(document.createTextNode('Custom timer for this part'))
+  row.appendChild(timerOverride)
+
+  const partTimerFields = document.createElement('div')
+  partTimerFields.className = 'mpm-timer-fields'
+  partTimerFields.style.display = part.timeLimitSeconds !== undefined ? 'flex' : 'none'
+  const configuredSeconds = part.timeLimitSeconds ?? defaultTimeLimitSeconds ?? 30
+
+  const partMinutesLabel = document.createElement('label')
+  partMinutesLabel.appendChild(document.createTextNode('Minutes'))
+  const partMinutes = document.createElement('input')
+  partMinutes.type = 'number'
+  partMinutes.className = 'edit-input mpm-timer-minutes'
+  partMinutes.min = '0'
+  partMinutes.step = '1'
+  partMinutes.value = String(Math.floor(configuredSeconds / 60))
+  partMinutesLabel.appendChild(partMinutes)
+  partTimerFields.appendChild(partMinutesLabel)
+
+  const partSecondsLabel = document.createElement('label')
+  partSecondsLabel.appendChild(document.createTextNode('Seconds'))
+  const partSeconds = document.createElement('input')
+  partSeconds.type = 'number'
+  partSeconds.className = 'edit-input mpm-timer-seconds'
+  partSeconds.min = '0'
+  partSeconds.max = '59'
+  partSeconds.step = '1'
+  partSeconds.value = String(configuredSeconds % 60)
+  partSecondsLabel.appendChild(partSeconds)
+  partTimerFields.appendChild(partSecondsLabel)
+  row.appendChild(partTimerFields)
+
+  const partTimerError = document.createElement('div')
+  partTimerError.className = 'media-error mpm-timer-error'
+  partTimerError.setAttribute('role', 'alert')
+  row.appendChild(partTimerError)
 
   const mediaTypeSelect = document.createElement('select')
   mediaTypeSelect.className = 'edit-input mpm-media-type'
@@ -2097,7 +2532,15 @@ function readQuestionFromDOM(currentType: QuestionType): Question {
       for (const row of rows) {
         const answer = (row.querySelector('.mpm-answer-input') as HTMLInputElement | null)?.value ?? ''
         const media = readPartMedia(row as HTMLElement)
-        parts.push({ media, answer })
+        const part: MultiPartMediaPart = { media, answer }
+        const timerOverride = row.querySelector('.mpm-timer-override__checkbox') as HTMLInputElement | null
+        if (timerOverride?.checked) {
+          const minutes = (row.querySelector('.mpm-timer-minutes') as HTMLInputElement | null)?.valueAsNumber ?? 0
+          const seconds = (row.querySelector('.mpm-timer-seconds') as HTMLInputElement | null)?.valueAsNumber ?? 0
+          const totalSeconds = minutes * 60 + seconds
+          if (Number.isInteger(totalSeconds) && totalSeconds > 0) part.timeLimitSeconds = totalSeconds
+        }
+        parts.push(part)
       }
       if (parts.length === 0) {
         parts.push({ media: { type: MEDIA_TYPE.image, src: '' }, answer: '' })
@@ -2227,6 +2670,60 @@ function editCell(ci: number, qi: number): void {
   ffaLabel.appendChild(ffaCheckbox)
   ffaLabel.appendChild(document.createTextNode('Free for All'))
   content.appendChild(ffaLabel)
+
+  const timerToggleLabel = document.createElement('label')
+  timerToggleLabel.className = 'timer-toggle'
+  const timerCheckbox = document.createElement('input')
+  timerCheckbox.type = 'checkbox'
+  timerCheckbox.className = 'timer-toggle__checkbox'
+  timerCheckbox.id = 'cell-timed'
+  timerCheckbox.checked = question.timeLimitSeconds !== undefined
+  timerToggleLabel.appendChild(timerCheckbox)
+  const timerToggleText = document.createElement('span')
+  timerToggleText.id = 'cell-timer-toggle-text'
+  timerToggleText.textContent = question.type === QUESTION_TYPE.multiPartMedia ? 'Default timer for parts' : 'Timed question'
+  timerToggleLabel.appendChild(timerToggleText)
+  content.appendChild(timerToggleLabel)
+
+  const timerFields = document.createElement('div')
+  timerFields.className = 'timer-editor'
+  timerFields.id = 'cell-timer-fields'
+  timerFields.style.display = question.timeLimitSeconds !== undefined ? 'flex' : 'none'
+
+  const configuredSeconds = question.timeLimitSeconds ?? 30
+  const minuteField = document.createElement('label')
+  minuteField.className = 'timer-editor__field'
+  minuteField.appendChild(document.createTextNode('Minutes'))
+  const minuteInput = document.createElement('input')
+  minuteInput.type = 'number'
+  minuteInput.className = 'edit-input'
+  minuteInput.id = 'cell-timer-minutes'
+  minuteInput.min = '0'
+  minuteInput.step = '1'
+  minuteInput.value = String(Math.floor(configuredSeconds / 60))
+  minuteField.appendChild(minuteInput)
+  timerFields.appendChild(minuteField)
+
+  const secondField = document.createElement('label')
+  secondField.className = 'timer-editor__field'
+  secondField.appendChild(document.createTextNode('Seconds'))
+  const secondInput = document.createElement('input')
+  secondInput.type = 'number'
+  secondInput.className = 'edit-input'
+  secondInput.id = 'cell-timer-seconds'
+  secondInput.min = '0'
+  secondInput.max = '59'
+  secondInput.step = '1'
+  secondInput.value = String(configuredSeconds % 60)
+  secondField.appendChild(secondInput)
+  timerFields.appendChild(secondField)
+  content.appendChild(timerFields)
+
+  const timerError = document.createElement('div')
+  timerError.className = 'media-error timer-editor__error'
+  timerError.id = 'cell-timer-error'
+  timerError.setAttribute('role', 'alert')
+  content.appendChild(timerError)
 
   activeEditCell = { ci, qi }
   editingQuestionType = question.type
@@ -2502,6 +2999,36 @@ function saveCellEdit(ci: number, qi: number): void {
   const cat = data.categories[ci]
   if (!cat) return
 
+  const timerCheckbox = document.getElementById('cell-timed') as HTMLInputElement | null
+  let timeLimitSeconds: number | undefined
+  if (timerCheckbox?.checked) {
+    const minutes = (document.getElementById('cell-timer-minutes') as HTMLInputElement | null)?.valueAsNumber ?? Number.NaN
+    const seconds = (document.getElementById('cell-timer-seconds') as HTMLInputElement | null)?.valueAsNumber ?? Number.NaN
+    const error = document.getElementById('cell-timer-error')
+    if (!Number.isInteger(minutes) || minutes < 0 || !Number.isInteger(seconds) || seconds < 0 || seconds > 59 || minutes * 60 + seconds < 1) {
+      if (error) error.textContent = 'Enter a duration of at least one second; seconds must be between 0 and 59.'
+      return
+    }
+    timeLimitSeconds = minutes * 60 + seconds
+  }
+
+  if (editingQuestionType === QUESTION_TYPE.multiPartMedia) {
+    const partRows = document.querySelectorAll<HTMLElement>('#cell-mpm-parts .mpm-part-row')
+    for (const row of partRows) {
+      const override = row.querySelector('.mpm-timer-override__checkbox') as HTMLInputElement | null
+      const error = row.querySelector<HTMLElement>('.mpm-timer-error')
+      if (error) error.textContent = ''
+      if (!override?.checked) continue
+
+      const minutes = (row.querySelector('.mpm-timer-minutes') as HTMLInputElement | null)?.valueAsNumber ?? Number.NaN
+      const seconds = (row.querySelector('.mpm-timer-seconds') as HTMLInputElement | null)?.valueAsNumber ?? Number.NaN
+      if (!Number.isInteger(minutes) || minutes < 0 || !Number.isInteger(seconds) || seconds < 0 || seconds > 59 || minutes * 60 + seconds < 1) {
+        if (error) error.textContent = 'Enter at least one second; seconds must be between 0 and 59.'
+        return
+      }
+    }
+  }
+
   const ptsEl = document.getElementById('cell-pts') as HTMLInputElement | null
   if (ptsEl) cat.points[qi] = Number(ptsEl.value) || 100
 
@@ -2512,6 +3039,8 @@ function saveCellEdit(ci: number, qi: number): void {
 
   const ffaEl = document.getElementById('cell-ffa') as HTMLInputElement | null
   if (ffaEl?.checked) newQ.ffa = true
+
+  if (timeLimitSeconds !== undefined) newQ.timeLimitSeconds = timeLimitSeconds
 
   if (editingQuestionType !== QUESTION_TYPE.multiPartMedia) {
     const oldQ = cat.questions[qi]
@@ -3074,9 +3603,19 @@ function setupEvents(): void {
     'keydown',
     (e) => {
       if (e.key === 'Escape') {
-        destroyYoutubePlayer()
-        for (const id of ['q-overlay', 'edit-overlay', 'admin-overlay', 'winner-overlay', 'team-setup-overlay', 'quiz-manager-overlay']) {
+        if ($('q-overlay').style.display !== 'none') closeQModal()
+        for (const id of ['edit-overlay', 'admin-overlay', 'winner-overlay', 'team-setup-overlay', 'quiz-manager-overlay']) {
           $(id).style.display = 'none'
+        }
+        return
+      }
+      if (e.code === 'Space' && !e.repeat && $('q-overlay').style.display !== 'none') {
+        const target = e.target
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return
+        if (target instanceof HTMLButtonElement && target.closest('#q-modal')) return
+        if (countdown) {
+          e.preventDefault()
+          toggleAnswerLock()
         }
       }
     },
@@ -3085,8 +3624,12 @@ function setupEvents(): void {
 
   function handleOverlayClick(e: MouseEvent): void {
     if (e.target === e.currentTarget) {
-      if ((e.currentTarget as HTMLElement).id === 'q-overlay') destroyYoutubePlayer()
-      ;(e.currentTarget as HTMLElement).style.display = 'none'
+      if ((e.currentTarget as HTMLElement).id === 'q-overlay') {
+        closeQModal()
+      } else {
+        const overlay = e.currentTarget as HTMLElement
+        overlay.style.display = 'none'
+      }
     }
   }
 
@@ -3128,6 +3671,17 @@ function setupEvents(): void {
 
   // Question modal buttons
   $('btn-close-question').addEventListener('click', closeQModal, { signal })
+  $('btn-lock').addEventListener('click', toggleAnswerLock, { signal })
+  $('btn-timer-pause').addEventListener('click', () => {
+    toggleCountdownPause()
+    const button = $('btn-timer-pause') as HTMLButtonElement
+    button.blur()
+  }, { signal })
+  $('btn-timer-mute').addEventListener('click', () => {
+    toggleTimerMute()
+    const button = $('btn-timer-mute') as HTMLButtonElement
+    button.blur()
+  }, { signal })
   $('btn-reveal').addEventListener('click', revealAnswer, { signal })
   $('btn-correct').addEventListener('click', () => {
     if (mpmCarousel) { mpmCarouselJudge('correct'); return }
@@ -3264,6 +3818,7 @@ function setupEvents(): void {
           const q = cat?.questions[activeQ.qIdx]
 
           if (q?.type === QUESTION_TYPE.multiPartMedia && mpmCarousel) {
+            if (countdown) lockAnswer()
             mpmCarousel.ffaTeamPerPart[mpmCarousel.currentIdx] = teamIdx
             const picker = document.getElementById('ffa-team-picker')
             if (picker) picker.remove()
@@ -3286,6 +3841,7 @@ function setupEvents(): void {
             const nobodyCat = data.categories[activeQ.catIdx]
             const nobodyQ = nobodyCat?.questions[activeQ.qIdx]
             if (nobodyQ?.ffa && nobodyQ.type === QUESTION_TYPE.multiPartMedia) {
+              endCountdown()
               mpmCarousel.results[mpmCarousel.currentIdx] = 'wrong'
               mpmCarouselAdvance()
               break
@@ -3323,14 +3879,19 @@ function setupEvents(): void {
               results: stealQ.parts.map(() => null), teamIdx: null,
               ffaTeamPerPart: stealQ.parts.map(() => null),
             }
-            $('btn-reveal').style.display = 'none'
-            $('btn-correct').style.display = 'inline-flex'
-            $('btn-wrong').style.display = 'inline-flex'
-            $('btn-skip').style.display = 'inline-flex'
             renderMpmSlide(mpmCarousel)
+            prepareMultiPartControls(stealQ, true)
           } else {
-            $('btn-reveal').style.display = 'inline-flex'
+            const timed = stealQ.timeLimitSeconds !== undefined
+            $('btn-reveal').style.display = timed ? 'none' : 'inline-flex'
+            if (timed) showLockButton('lock')
+            else hideLockButton()
             $('btn-skip').style.display = ''
+            if (stealQ.timeLimitSeconds !== undefined) {
+              startCountdown(stealQ.timeLimitSeconds)
+              const lockButton = $('btn-lock') as HTMLButtonElement
+              lockButton.focus()
+            }
           }
 
           if (stealQ.media?.type === MEDIA_TYPE.image) {
@@ -3466,7 +4027,13 @@ function setupEvents(): void {
           if (!list) break
           const count = list.children.length
           const newPart: MultiPartMediaPart = { media: { type: MEDIA_TYPE.image, src: '' }, answer: '' }
-          list.appendChild(buildMultiPartMediaRow(count, newPart, count + 1))
+          const defaultTimerEnabled = (document.getElementById('cell-timed') as HTMLInputElement | null)?.checked === true
+          const defaultMinutes = (document.getElementById('cell-timer-minutes') as HTMLInputElement | null)?.valueAsNumber ?? 0
+          const defaultSeconds = (document.getElementById('cell-timer-seconds') as HTMLInputElement | null)?.valueAsNumber ?? 0
+          const defaultTimeLimitSeconds = defaultTimerEnabled && Number.isInteger(defaultMinutes) && Number.isInteger(defaultSeconds)
+            ? defaultMinutes * 60 + defaultSeconds
+            : undefined
+          list.appendChild(buildMultiPartMediaRow(count, newPart, count + 1, defaultTimeLimitSeconds))
           rebuildMpmPartNumbers(list)
           break
         }
@@ -3519,6 +4086,25 @@ function setupEvents(): void {
         if (container) renderAnswerFields(container, converted)
         const mw = document.getElementById('cell-media-wrap')
         if (mw) mw.style.display = newType === QUESTION_TYPE.multiPartMedia ? 'none' : ''
+        const timerText = document.getElementById('cell-timer-toggle-text')
+        if (timerText) timerText.textContent = newType === QUESTION_TYPE.multiPartMedia ? 'Default timer for parts' : 'Timed question'
+        return
+      }
+
+      if (target instanceof HTMLInputElement && target.id === 'cell-timed') {
+        const fields = document.getElementById('cell-timer-fields')
+        const error = document.getElementById('cell-timer-error')
+        if (fields) fields.style.display = target.checked ? 'flex' : 'none'
+        if (error) error.textContent = ''
+        return
+      }
+
+      if (target instanceof HTMLInputElement && target.classList.contains('mpm-timer-override__checkbox')) {
+        const row = target.closest('.mpm-part-row')
+        const fields = row?.querySelector<HTMLElement>('.mpm-timer-fields')
+        const error = row?.querySelector<HTMLElement>('.mpm-timer-error')
+        if (fields) fields.style.display = target.checked ? 'flex' : 'none'
+        if (error) error.textContent = ''
         return
       }
 

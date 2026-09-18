@@ -67,6 +67,7 @@ const questionBaseFields = {
   media: questionMediaSchema.optional(),
   x2: z.boolean().optional(),
   ffa: z.boolean().optional(),
+  timeLimitSeconds: z.number().int().positive().optional(),
 }
 
 const openQuestionSchema = z.object({
@@ -115,6 +116,7 @@ export type NumericQuestion = z.infer<typeof numericQuestionSchema>
 const multiPartMediaPartSchema = z.object({
   media: questionMediaSchema,
   answer: z.string(),
+  timeLimitSeconds: z.number().int().positive().optional(),
 })
 export type MultiPartMediaPart = z.infer<typeof multiPartMediaPartSchema>
 
